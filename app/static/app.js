@@ -763,7 +763,6 @@ async function loadRoutes() {
                 <button type="button" class="date-capsule" data-act="edit-date" data-id="${r.id}" title="点击修改日期范围">${dateLabel}</button>
               </span>
               <span class="route-actions">
-                <button type="button" class="act-pill ${notifyCls}" data-act="notify" data-id="${r.id}" title="${notifyTitle}">接收</button>
                 <button type="button" class="act-pill" data-act="toggle" data-id="${r.id}" title="${toggleLabel}监控">${toggleLabel}</button>
                 <button type="button" class="act-pill" data-act="scan" data-id="${r.id}" title="重新扫描">扫描</button>
                 <button type="button" class="act-pill danger" data-act="delete" data-id="${r.id}" title="删除">删除</button>
@@ -773,7 +772,15 @@ async function loadRoutes() {
                   <span class="price">${money(r.best_price)}</span>
                   <span class="delta ${d.cls}">${d.html.replace("较上期 ", "")}</span>
                 </span>
-                <span class="route-threshold">${thresholdText}</span>
+                <span class="route-foot-right">
+                  <span class="route-threshold">${thresholdText}</span>
+                  <button type="button" class="route-mail ${notifyCls}" data-act="notify" data-id="${r.id}" title="${notifyTitle}" aria-label="${notifyTitle}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                      <path d="M4 7l8 6 8-6"></path>
+                    </svg>
+                  </button>
+                </span>
               </span>
             </span>
             <span class="route-badges">${statusMark}${pinMark}${hit}${pausedMark}</span>
@@ -782,7 +789,7 @@ async function loadRoutes() {
     })
     .join("");
 
-  const isQuickTarget = (t) => t.closest(".route-check, .act-pill, .date-capsule");
+  const isQuickTarget = (t) => t.closest(".route-check, .act-pill, .date-capsule, .route-mail");
 
   box.querySelectorAll(".route").forEach((el) => {
     const open = () => openDetail(Number(el.dataset.id));
@@ -807,7 +814,7 @@ async function loadRoutes() {
     });
   });
 
-  box.querySelectorAll(".act-pill, .date-capsule[data-act]").forEach((btn) => {
+  box.querySelectorAll(".act-pill, .date-capsule[data-act], .route-mail").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();

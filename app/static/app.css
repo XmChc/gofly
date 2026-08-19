@@ -705,14 +705,45 @@ main,
 .route-badges:empty {
   display: none;
 }
+.route-foot-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
 .route-threshold {
   color: var(--muted);
   font-size: 0.72rem;
   white-space: nowrap;
-  margin-left: auto;
 }
 .route-threshold:empty {
   display: none;
+}
+.route-mail {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+.route-mail svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  display: block;
+}
+.route-mail:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.route-mail.has-notify {
+  color: var(--accent-strong);
 }
 
 .badge-hit,
@@ -1710,11 +1741,6 @@ body.modal-open { overflow: hidden; }
   display: flex;
   gap: 0.5rem;
   margin-left: auto;
-}
-.act-pill.has-notify {
-  border-color: #bfdbfe;
-  color: var(--accent-strong);
-  background: #eff6ff;
 }
 
 /* —— Chinese date picker —— */

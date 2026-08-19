@@ -5,8 +5,9 @@ platforms:
   - fliggy
 
 schedule:
-  interval_minutes: 90
-  jitter_minutes: 20
+  # 单位秒，可直接改；最短 300。实际触发为 interval±jitter，并穿插随机单航线探测
+  interval_seconds: 5400
+  jitter_seconds: 1200
   run_on_start: false
 
 crawler:

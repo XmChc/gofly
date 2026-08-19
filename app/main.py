@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app import db
 from app.cities import CITY_NAMES, CityResolveError, resolve_route_inputs, suggest_cities
-from app.config import get_config
+from app.config import MIN_INTERVAL_SECONDS, get_config
 from app.scheduler import reschedule, scheduler_status, start_scheduler, stop_scheduler
 from app.services.demo_history import backfill_demo_history
 from app.services.monitor import get_scan_state, run_all_enabled, run_one_exclusive
@@ -55,7 +55,10 @@ class ResolveIn(BaseModel):
 
 
 class ScheduleIn(BaseModel):
-    interval_minutes: int
+    """扫描间隔（秒）。优先 interval_seconds；也可传 interval_minutes。"""
+
+    interval_seconds: int | None = None
+    interval_minutes: int | None = None
 
 
 class NotifyTestIn(BaseModel):
@@ -88,13 +91,19 @@ def health() -> dict[str, Any]:
     sched = scheduler_status()
     scan = get_scan_state()
     last = db.latest_scan_run()
+    interval_s = int(sched.get("interval_seconds") or cfg.schedule.interval_seconds)
+    jitter_s = int(sched.get("jitter_seconds") or cfg.schedule.jitter_seconds)
     return {
         "ok": True,
         "platforms": cfg.platforms,
-        "interval_minutes": cfg.schedule.interval_minutes,
-        "interval_options": [15, 30, 45, 60, 90, 120, 180, 360, 720, 1440],
-        "jitter_minutes": cfg.schedule.jitter_minutes,
+        "interval_seconds": interval_s,
+        "min_interval_seconds": MIN_INTERVAL_SECONDS,
+        "jitter_seconds": jitter_s,
+        # 兼容旧字段
+        "interval_minutes": max(1, round(interval_s / 60)),
+        "jitter_minutes": max(0, round(jitter_s / 60)),
         "next_run_at": sched.get("next_run_at"),
+        "next_probe_at": sched.get("next_probe_at"),
         "scanning": scan.get("scanning"),
         "scan_progress": scan.get("progress"),
         "scan_route_id": scan.get("current_route_id"),
@@ -105,16 +114,22 @@ def health() -> dict[str, Any]:
 
 @app.patch("/api/schedule")
 def api_schedule(body: ScheduleIn) -> dict[str, Any]:
-    from app.config import update_schedule_interval
+    from app.config import update_schedule_interval_seconds
 
+    if body.interval_seconds is not None:
+        seconds = int(body.interval_seconds)
+    elif body.interval_minutes is not None:
+        seconds = int(body.interval_minutes) * 60
+    else:
+        raise HTTPException(400, "请提供 interval_seconds（单位秒，≥300）")
     try:
-        minutes = update_schedule_interval(body.interval_minutes)
+        seconds = update_schedule_interval_seconds(seconds)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     status = reschedule()
     return {
         "ok": True,
-        "interval_minutes": minutes,
+        "interval_seconds": seconds,
         **status,
     }
 

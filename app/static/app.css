@@ -125,17 +125,33 @@ body {
 }
 
 .interval-pick {
-  gap: 0.4rem;
+  gap: 0.35rem;
+  align-items: center;
 }
-.interval-pick select {
+.interval-pick input {
+  width: 4.5rem;
   border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 28%, transparent);
   background: transparent;
   font: inherit;
   color: var(--ink);
   font-weight: 600;
-  padding: 0;
-  cursor: pointer;
+  padding: 0 0.15rem;
   outline: none;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.interval-pick input::-webkit-outer-spin-button,
+.interval-pick input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.interval-pick input:focus {
+  border-bottom-color: var(--ink);
+}
+.interval-unit {
+  font-weight: 600;
+  opacity: 0.72;
 }
 
 /* —— Page —— */

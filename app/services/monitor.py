@@ -33,17 +33,26 @@ def _set_scan_state(**kwargs: Any) -> None:
         _scan_state.update(kwargs)
 
 
+def _route_alert_limit(route: dict[str, Any]) -> float:
+    try:
+        return float(route.get("alert_threshold") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _collect_drops(
     route: dict[str, Any],
     results: list[dict[str, Any]],
     *,
     batch_id: str,
 ) -> list[dict[str, Any]]:
-    """对本轮各平台快照校正已有提醒并检测新降价（仅默认筛选项内）。
+    """对本轮各平台快照校正已有提醒并检测新降价 / 首次低价（仅默认筛选项内）。
 
     已有提醒：现价上涨或航班消失 → 删除；继续下降 → 更新为最新价。
+    首次见到且现价 ≤ 限额：直接记提醒并纳入推送。
     """
     filters = route.get("filters")
+    limit = _route_alert_limit(route)
     drops: list[dict[str, Any]] = []
     db.purge_alerts_outside_watch_dates(int(route["id"]))
     allow_dates = set(db.route_depart_dates(route))
@@ -64,7 +73,15 @@ def _collect_drops(
             )
             seen.add(key)
             drops.append({**d, "route": route, "batch_id": batch_id})
-        for d in db.detect_flight_drops(route["id"], int(sid), filters=filters):
+        candidates = list(
+            db.detect_flight_drops(route["id"], int(sid), filters=filters)
+        )
+        candidates.extend(
+            db.detect_first_hits_below_limit(
+                route["id"], int(sid), limit=limit, filters=filters
+            )
+        )
+        for d in candidates:
             day = str(d.get("depart_date") or r.get("depart_date") or "").strip()
             if allow_dates and day and day not in allow_dates:
                 continue
@@ -73,11 +90,13 @@ def _collect_drops(
                 str(d.get("flight_no") or "").upper(),
                 day,
             )
+            # 首次低价：对照价记为首见价，便于后续再降时计算真实降幅
+            baseline = float(d["price"]) if d.get("first_hit") else float(d["prev_price"])
             wrote = db.record_alert(
                 route["id"],
                 d["platform"],
                 float(d["price"]),
-                float(d["prev_price"]),
+                baseline,
                 d.get("snapshot_id"),
                 flight_no=str(d.get("flight_no") or ""),
                 airline=str(d.get("airline") or ""),
@@ -92,14 +111,14 @@ def _collect_drops(
 
 
 def _drops_for_notify(drops: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """按航线提醒限额过滤推送：限额 > 0 时仅推送现价 ≤ 限额的降价；空/0 不校验限额。"""
+    """按航线提醒限额过滤推送：限额 > 0 时仅推送现价 ≤ 限额；空/0 不校验限额。
+
+    首次低价命中（first_hit）本身已要求 ≤ 限额，仍走同一过滤以保持一致。
+    """
     out: list[dict[str, Any]] = []
     for d in drops:
         route = d.get("route") or {}
-        try:
-            limit = float(route.get("alert_threshold") or 0)
-        except (TypeError, ValueError):
-            limit = 0.0
+        limit = _route_alert_limit(route)
         if limit > 0 and float(d.get("price") or 0) > limit:
             continue
         out.append(d)
@@ -236,7 +255,15 @@ def run_one_exclusive(route: dict[str, Any], *, trigger: str = "manual_one") -> 
 
 
 def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
-    routes = db.list_routes(enabled_only=True)
+    import random
+    import time
+
+    routes = list(db.list_routes(enabled_only=True))
+    # 打乱航线顺序，避免每次同序同节奏请求
+    random.shuffle(routes)
+    crawl = crawler_dict()
+    delay_lo = float(crawl.get("delay_min", 3))
+    delay_hi = float(crawl.get("delay_max", 8))
     with _state_lock:
         if _scan_state["scanning"]:
             return {"busy": True, "results": [], "run_id": None}
@@ -258,6 +285,8 @@ def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
     scan_batch = uuid.uuid4().hex
     try:
         for i, route in enumerate(routes, start=1):
+            if i > 1:
+                time.sleep(random.uniform(delay_lo, delay_hi))
             _set_scan_state(current_route_id=route["id"], progress=f"{i}/{len(routes)}")
             logger.info(
                 "scan %s %s->%s %s",

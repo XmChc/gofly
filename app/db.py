@@ -943,6 +943,73 @@ def reconcile_alerts_for_snapshot(
     return updated
 
 
+def _snapshot_prev_and_filters(
+    route_id: int,
+    snapshot_id: int,
+    *,
+    filters: Any = None,
+) -> tuple[Any, Any | None, Any] | None:
+    """读取快照、上一成功快照与筛选项；快照不存在时返回 None。"""
+    with connect() as conn:
+        snap = conn.execute(
+            "SELECT id, platform, depart_date FROM price_snapshots WHERE id = ? AND route_id = ?",
+            (snapshot_id, route_id),
+        ).fetchone()
+        if not snap:
+            return None
+        prev = conn.execute(
+            """
+            SELECT id FROM price_snapshots
+            WHERE route_id = ? AND platform = ? AND id < ?
+              AND min_price IS NOT NULL
+              AND IFNULL(depart_date, '') = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (route_id, snap["platform"], snapshot_id, snap["depart_date"] or ""),
+        ).fetchone()
+        if filters is None:
+            row = conn.execute(
+                "SELECT filter_json FROM watch_routes WHERE id = ?",
+                (route_id,),
+            ).fetchone()
+            filters = row["filter_json"] if row else None
+    return snap, prev, filters
+
+
+def _offer_alert_item(
+    *,
+    route_id: int,
+    platform: object,
+    snapshot_id: int,
+    depart_date: object,
+    offer: dict[str, Any],
+    flight_no: str,
+    price: float,
+    prev_price: float,
+) -> dict[str, Any]:
+    return {
+        "route_id": route_id,
+        "platform": platform,
+        "flight_no": flight_no,
+        "airline": offer.get("airline") or "",
+        "price": price,
+        "prev_price": prev_price,
+        "delta": round(price - prev_price, 1),
+        "snapshot_id": snapshot_id,
+        "depart_time": offer.get("depart_time") or "",
+        "arrive_time": offer.get("arrive_time") or "",
+        "duration_min": offer.get("duration_min"),
+        "layover_min": offer.get("layover_min"),
+        "stops": int(offer.get("stops") or 0),
+        "seats_hint": offer.get("seats_hint") or "",
+        "aircraft": offer.get("aircraft") or "",
+        "meta": offer.get("meta") or {},
+        "origin": offer.get("origin") or "",
+        "destination": offer.get("destination") or "",
+        "depart_date": depart_date or offer.get("depart_date") or "",
+    }
+
+
 def detect_flight_drops(
     route_id: int,
     snapshot_id: int,
@@ -955,31 +1022,12 @@ def detect_flight_drops(
     """
     from app.services.filters import normalize_filters, offer_matches_filters
 
-    with connect() as conn:
-        snap = conn.execute(
-            "SELECT id, platform, depart_date FROM price_snapshots WHERE id = ? AND route_id = ?",
-            (snapshot_id, route_id),
-        ).fetchone()
-        if not snap:
-            return []
-        prev = conn.execute(
-            """
-            SELECT id FROM price_snapshots
-            WHERE route_id = ? AND platform = ? AND id < ?
-              AND min_price IS NOT NULL
-              AND IFNULL(depart_date, '') = ?
-            ORDER BY id DESC LIMIT 1
-            """,
-            (route_id, snap["platform"], snapshot_id, snap["depart_date"] or ""),
-        ).fetchone()
-        if not prev:
-            return []
-        if filters is None:
-            row = conn.execute(
-                "SELECT filter_json FROM watch_routes WHERE id = ?",
-                (route_id,),
-            ).fetchone()
-            filters = row["filter_json"] if row else None
+    packed = _snapshot_prev_and_filters(route_id, snapshot_id, filters=filters)
+    if not packed:
+        return []
+    snap, prev, filters = packed
+    if not prev:
+        return []
 
     route_filters = normalize_filters(filters)
     curr_offers = offers_for_snapshot(snapshot_id)
@@ -1004,30 +1052,95 @@ def detect_flight_drops(
         old = prev_by_fn[fn]
         if cur >= old:
             continue
-        item = {
-            "route_id": route_id,
-            "platform": snap["platform"],
-            "flight_no": fn,
-            "airline": o.get("airline") or "",
-            "price": cur,
-            "prev_price": old,
-            "delta": round(cur - old, 1),
-            "snapshot_id": snapshot_id,
-            "depart_time": o.get("depart_time") or "",
-            "arrive_time": o.get("arrive_time") or "",
-            "duration_min": o.get("duration_min"),
-            "layover_min": o.get("layover_min"),
-            "stops": int(o.get("stops") or 0),
-            "seats_hint": o.get("seats_hint") or "",
-            "aircraft": o.get("aircraft") or "",
-            "meta": o.get("meta") or {},
-            "origin": o.get("origin") or "",
-            "destination": o.get("destination") or "",
-            "depart_date": snap["depart_date"] or o.get("depart_date") or "",
-        }
+        item = _offer_alert_item(
+            route_id=route_id,
+            platform=snap["platform"],
+            snapshot_id=snapshot_id,
+            depart_date=snap["depart_date"],
+            offer=o,
+            flight_no=fn,
+            price=cur,
+            prev_price=old,
+        )
         if fn not in best or cur < best[fn]["price"]:
             best[fn] = item
     return sorted(best.values(), key=lambda x: x["delta"])
+
+
+def detect_first_hits_below_limit(
+    route_id: int,
+    snapshot_id: int,
+    *,
+    limit: float,
+    filters: Any = None,
+) -> list[dict[str, Any]]:
+    """首次见到的航班：无上期同航班价可比，现价 ≤ 限额，且命中默认筛选项。
+
+    「首次」= 无上一成功快照，或该航班号未出现在上一快照中；已有提醒的不再重复推送。
+    限额 ≤ 0 时不启用本规则（无限额可参照）。
+    """
+    from app.services.filters import normalize_filters, offer_matches_filters
+
+    try:
+        limit_v = float(limit or 0)
+    except (TypeError, ValueError):
+        limit_v = 0.0
+    if limit_v <= 0:
+        return []
+
+    packed = _snapshot_prev_and_filters(route_id, snapshot_id, filters=filters)
+    if not packed:
+        return []
+    snap, prev, filters = packed
+    platform = str(snap["platform"] or "")
+    day = str(snap["depart_date"] or "")
+
+    prev_by_fn: set[str] = set()
+    if prev:
+        for o in offers_for_snapshot(int(prev["id"])):
+            fn = str(o.get("flight_no") or "").strip().upper()
+            if fn:
+                prev_by_fn.add(fn)
+
+    with connect() as conn:
+        alerted = {
+            str(r["flight_no"] or "").strip().upper()
+            for r in conn.execute(
+                """
+                SELECT flight_no FROM price_alerts
+                WHERE route_id = ? AND platform = ?
+                  AND IFNULL(depart_date, '') = ?
+                """,
+                (route_id, platform, day),
+            ).fetchall()
+            if str(r["flight_no"] or "").strip()
+        }
+
+    route_filters = normalize_filters(filters)
+    best: dict[str, dict[str, Any]] = {}
+    for o in offers_for_snapshot(snapshot_id):
+        if not offer_matches_filters(o, route_filters):
+            continue
+        fn = str(o.get("flight_no") or "").strip().upper()
+        if not fn or fn in prev_by_fn or fn in alerted:
+            continue
+        cur = float(o["price"])
+        if cur > limit_v:
+            continue
+        item = _offer_alert_item(
+            route_id=route_id,
+            platform=platform,
+            snapshot_id=snapshot_id,
+            depart_date=day,
+            offer=o,
+            flight_no=fn,
+            price=cur,
+            prev_price=limit_v,
+        )
+        item["first_hit"] = True
+        if fn not in best or cur < best[fn]["price"]:
+            best[fn] = item
+    return sorted(best.values(), key=lambda x: x["price"])
 
 
 def _alert_row_to_dict(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:

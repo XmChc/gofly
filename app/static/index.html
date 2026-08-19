@@ -25,20 +25,19 @@
       <span id="health" class="status">连接中…</span>
       <span id="lastRun" class="status soft">上次检测 —</span>
       <span id="nextRun" class="status soft">下次扫描 —</span>
+      <span id="nextProbe" class="status soft" hidden></span>
       <label class="status soft interval-pick">
         扫描频率
-        <select id="scanInterval" aria-label="扫描频率">
-          <option value="15">每 15 分钟</option>
-          <option value="30">每 30 分钟</option>
-          <option value="45">每 45 分钟</option>
-          <option value="60">每 1 小时</option>
-          <option value="90">每 1.5 小时</option>
-          <option value="120">每 2 小时</option>
-          <option value="180">每 3 小时</option>
-          <option value="360">每 6 小时</option>
-          <option value="720">每 12 小时</option>
-          <option value="1440">每天一次</option>
-        </select>
+        <input
+          id="scanInterval"
+          type="number"
+          min="300"
+          step="1"
+          inputmode="numeric"
+          aria-label="扫描频率（秒）"
+          title="单位秒，最少 300"
+        />
+        <span class="interval-unit">s</span>
       </label>
       <button id="btnScanAll" class="btn primary" type="button">扫描全部</button>
     </div>

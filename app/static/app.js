@@ -398,7 +398,13 @@ async function loadHealth() {
       }
     } else {
       health.classList.remove("busy");
-      health.textContent = `${names || "无平台"} · 每 ${h.interval_minutes} 分钟`;
+      const jitter = Number(h.jitter_seconds) || 0;
+      const interval = Number(h.interval_seconds) || 0;
+      if (jitter > 0 && interval > 0) {
+        health.textContent = `${names || "无平台"} · 每 ${interval}±${jitter} s`;
+      } else {
+        health.textContent = `${names || "无平台"} · 每 ${interval || "—"} s`;
+      }
     }
     const last = document.getElementById("lastRun");
     if (last) {
@@ -409,7 +415,14 @@ async function loadHealth() {
     next.textContent = h.next_run_at
       ? `下次 ${fmtTime(h.next_run_at)}`
       : "下次扫描 —";
-    syncScanIntervalSelect(h.interval_minutes);
+    const probeEl = document.getElementById("nextProbe");
+    if (probeEl) {
+      probeEl.textContent = h.next_probe_at
+        ? `穿插 ${fmtTime(h.next_probe_at)}`
+        : "";
+      probeEl.hidden = !h.next_probe_at;
+    }
+    syncScanIntervalInput(h.interval_seconds, h.min_interval_seconds);
     state.hasDefaultMail = Boolean(h.notify?.has_default_mail);
     return h;
   } catch {
@@ -418,17 +431,13 @@ async function loadHealth() {
   }
 }
 
-function syncScanIntervalSelect(minutes) {
-  const sel = document.getElementById("scanInterval");
-  if (!sel || minutes == null) return;
-  const v = String(minutes);
-  if (![...sel.options].some((o) => o.value === v)) {
-    const opt = document.createElement("option");
-    opt.value = v;
-    opt.textContent = `每 ${minutes} 分钟`;
-    sel.appendChild(opt);
-  }
-  if (document.activeElement !== sel) sel.value = v;
+function syncScanIntervalInput(seconds, minSeconds) {
+  const input = document.getElementById("scanInterval");
+  if (!input || seconds == null) return;
+  const min = Number(minSeconds) > 0 ? Number(minSeconds) : 300;
+  input.min = String(min);
+  if (document.activeElement === input) return;
+  input.value = String(Math.max(min, Math.round(Number(seconds) || min)));
 }
 
 async function loadAlerts() {
@@ -3205,19 +3214,38 @@ document.getElementById("btnScanOne").addEventListener("click", async (ev) => {
 
 window.addEventListener("resize", () => state.chart?.resize());
 
-document.getElementById("scanInterval")?.addEventListener("change", async (e) => {
-  const minutes = Number(e.target.value);
-  if (!minutes) return;
+async function applyScanInterval(seconds) {
+  const min = Number(document.getElementById("scanInterval")?.min) || 300;
+  const n = Math.round(Number(seconds));
+  if (!Number.isFinite(n)) {
+    toast("请输入有效秒数");
+    return;
+  }
+  if (n < min) {
+    toast(`扫描间隔不得少于 ${min} s`);
+    document.getElementById("scanInterval").value = String(min);
+    return;
+  }
   try {
     const r = await api("/api/schedule", {
       method: "PATCH",
-      body: JSON.stringify({ interval_minutes: minutes }),
+      body: JSON.stringify({ interval_seconds: n }),
     });
-    toast(`扫描频率已设为每 ${r.interval_minutes} 分钟`);
+    toast(`扫描频率已设为每 ${r.interval_seconds}±${r.jitter_seconds || 0} s（含随机穿插）`);
     await loadHealth();
   } catch (err) {
     toast(err.message || String(err));
     loadHealth();
+  }
+}
+
+document.getElementById("scanInterval")?.addEventListener("change", async (e) => {
+  await applyScanInterval(e.target.value);
+});
+document.getElementById("scanInterval")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    e.target.blur();
   }
 });
 

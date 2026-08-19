@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -15,9 +15,26 @@ EXAMPLE_CONFIG = ROOT / "config.example.yaml"
 
 
 class ScheduleConfig(BaseModel):
-    interval_minutes: int = 60
-    jitter_minutes: int = 15
+    """扫描节奏。优先 interval_seconds；旧配置 interval_minutes 会自动换算。"""
+
+    interval_seconds: int = 3600
+    jitter_seconds: int = 900
     run_on_start: bool = True
+    # 兼容旧字段（写入时不再依赖）
+    interval_minutes: int | None = None
+    jitter_minutes: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_minutes(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        if out.get("interval_seconds") is None and out.get("interval_minutes") is not None:
+            out["interval_seconds"] = int(out["interval_minutes"]) * 60
+        if out.get("jitter_seconds") is None and out.get("jitter_minutes") is not None:
+            out["jitter_seconds"] = int(out["jitter_minutes"]) * 60
+        return out
 
 
 class CrawlerConfig(BaseModel):
@@ -124,30 +141,60 @@ def crawler_dict() -> dict[str, Any]:
     return get_config().crawler.model_dump()
 
 
-ALLOWED_INTERVALS = (15, 30, 45, 60, 90, 120, 180, 360, 720, 1440)
+MIN_INTERVAL_SECONDS = 300
 
 
 def config_file_path() -> Path:
     return _resolve_path(os.environ.get("GOFLY_CONFIG", DEFAULT_CONFIG))
 
 
-def update_schedule_interval(minutes: int) -> int:
-    minutes = int(minutes)
-    if minutes not in ALLOWED_INTERVALS:
-        raise ValueError(f"扫描间隔仅支持: {', '.join(map(str, ALLOWED_INTERVALS))} 分钟")
+def effective_jitter_seconds(interval_s: int, jitter_s: int | None = None) -> int:
+    """抖动上限随间隔缩放（约 40%），最短间隔 300s 时约 ±120s。"""
+    interval_s = max(MIN_INTERVAL_SECONDS, int(interval_s))
+    raw = int(jitter_s if jitter_s is not None else get_config().schedule.jitter_seconds)
+    cap = max(30, interval_s * 2 // 5)
+    return max(0, min(raw, cap))
+
+
+def _upsert_yaml_int(text: str, key: str, value: int) -> str:
+    if re.search(rf"{key}\s*:", text):
+        return re.sub(
+            rf"({key}\s*:\s*)\d+",
+            rf"\g<1>{value}",
+            text,
+            count=1,
+        )
+    if re.search(r"^schedule\s*:", text, flags=re.M):
+        return re.sub(
+            r"(^schedule\s*:\s*\n)",
+            rf"\1  {key}: {value}\n",
+            text,
+            count=1,
+            flags=re.M,
+        )
+    return text + f"\nschedule:\n  {key}: {value}\n"
+
+
+def _remove_yaml_key(text: str, key: str) -> str:
+    return re.sub(rf"(?m)^[ \t]*{key}\s*:.*\n?", "", text)
+
+
+def update_schedule_interval_seconds(seconds: int) -> int:
+    seconds = int(seconds)
+    if seconds < MIN_INTERVAL_SECONDS:
+        raise ValueError(f"扫描间隔不得少于 {MIN_INTERVAL_SECONDS} 秒")
     path = config_file_path()
     if not path.exists():
         path = EXAMPLE_CONFIG
     text = path.read_text(encoding="utf-8")
-    if re.search(r"interval_minutes\s*:", text):
-        text = re.sub(
-            r"(interval_minutes\s*:\s*)\d+",
-            rf"\g<1>{minutes}",
-            text,
-            count=1,
-        )
-    else:
-        text += f"\nschedule:\n  interval_minutes: {minutes}\n"
+    text = _upsert_yaml_int(text, "interval_seconds", seconds)
+    # 去掉旧分钟字段，避免下次加载被覆盖回旧值
+    text = _remove_yaml_key(text, "interval_minutes")
     path.write_text(text, encoding="utf-8")
     reload_config()
-    return minutes
+    return seconds
+
+
+# 兼容旧调用名
+def update_schedule_interval(minutes: int) -> int:
+    return update_schedule_interval_seconds(int(minutes) * 60) // 60

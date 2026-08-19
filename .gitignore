@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+config.yaml
+data/
+debug/
+user_data/
+logs/
+*.db
+.pytest_cache/
+.mypy_cache/
+playwright-report/
+.DS_Store
+Thumbs.db

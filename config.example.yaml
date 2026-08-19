@@ -1,0 +1,47 @@
+# 复制为 config.yaml 后修改
+# 推荐只用飞猪 MTOP API；ctrip/qunar 需 Playwright 且易被风控
+
+platforms:
+  - fliggy
+
+schedule:
+  interval_minutes: 90
+  jitter_minutes: 20
+  run_on_start: false
+
+crawler:
+  headless: true
+  timeout_seconds: 50
+  delay_min: 4
+  delay_max: 10
+  debug: false
+  debug_dir: debug
+  user_data_dir: user_data
+  max_attempts: 5
+  fliggy_max_poll: 4
+  rate_limit: true
+
+server:
+  host: 127.0.0.1
+  port: 8787
+
+database:
+  path: data/gofly.db
+
+# 微信低价推送：推荐 WxPusher（永久免费、不用实名）
+# https://wxpusher.zjiecode.com/ → 扫「极简推送」二维码 → 复制 SPT
+# 备选 channel: serverchan（token 填 SCT SendKey，https://sct.ftqq.com/）
+notify:
+  enabled: false
+  channel: wxpusher
+  token: ""
+
+seed_routes:
+  - origin: 厦门
+    destination: 乌鲁木齐
+    depart_date: "2026-09-20"
+    alert_threshold: 800
+  - origin: 喀什
+    destination: 南昌
+    depart_date: "2026-09-25"
+    alert_threshold: 900

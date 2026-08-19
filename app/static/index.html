@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GoFly</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css?v=32" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">✈</span>
+      <div>
+        <strong class="brand-name">GoFly</strong>
+        <span class="brand-sub">国内机票监控</span>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span id="health" class="status">连接中…</span>
+      <span id="lastRun" class="status soft">上次检测 —</span>
+      <span id="nextRun" class="status soft">下次扫描 —</span>
+      <label class="status soft interval-pick">
+        扫描频率
+        <select id="scanInterval" aria-label="扫描频率">
+          <option value="15">每 15 分钟</option>
+          <option value="30">每 30 分钟</option>
+          <option value="45">每 45 分钟</option>
+          <option value="60">每 1 小时</option>
+          <option value="90">每 1.5 小时</option>
+          <option value="120">每 2 小时</option>
+          <option value="180">每 3 小时</option>
+          <option value="360">每 6 小时</option>
+          <option value="720">每 12 小时</option>
+          <option value="1440">每天一次</option>
+        </select>
+      </label>
+      <button id="btnScanAll" class="btn primary" type="button">扫描全部</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="sheet add-sheet">
+      <form id="addForm" class="add-form">
+        <div class="field">
+          <label for="origin">出发城市</label>
+          <input id="origin" name="origin" list="cityList" placeholder="例如 厦门" required autocomplete="off" />
+          <span id="originHint" class="hint-live">输入城市名</span>
+        </div>
+        <div class="swap" aria-hidden="true">→</div>
+        <div class="field">
+          <label for="destination">到达城市</label>
+          <input id="destination" name="destination" list="cityList" placeholder="例如 乌鲁木齐" required autocomplete="off" />
+          <span id="destHint" class="hint-live">输入城市名</span>
+        </div>
+        <datalist id="cityList"></datalist>
+        <div class="field date-field">
+          <label for="depart_date_display">出发日期</label>
+          <div class="date-picker" id="datePicker">
+            <button type="button" class="date-trigger" id="depart_date_display" aria-haspopup="dialog" aria-expanded="false">
+              <span class="date-trigger-text">选择日期</span>
+              <span class="date-trigger-icon" aria-hidden="true">📅</span>
+            </button>
+            <input id="depart_date" name="depart_date" type="hidden" />
+            <input id="depart_date_end" name="depart_date_end" type="hidden" />
+            <div class="date-popover" id="datePopover" hidden role="dialog" aria-label="选择出发日期范围">
+              <div class="date-pop-head">
+                <button type="button" class="date-nav" data-nav="-1" aria-label="上个月">‹</button>
+                <div class="date-title" id="dateTitle">2026年8月</div>
+                <button type="button" class="date-nav" data-nav="1" aria-label="下个月">›</button>
+              </div>
+              <p class="date-range-hint" id="dateRangeHint">点击选择开始日，再点结束日</p>
+              <div class="date-weekdays">
+                <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+              </div>
+              <div class="date-grid" id="dateGrid"></div>
+              <div class="date-pop-foot">
+                <button type="button" class="date-quick" data-quick="7">一周后</button>
+                <button type="button" class="date-quick" data-quick="14">两周后</button>
+                <button type="button" class="date-quick" data-quick="21">三周后</button>
+                <button type="button" class="date-quick" data-quick="30">一个月后</button>
+              </div>
+            </div>
+          </div>
+          <span class="hint-live">范围算一组监控，扫描时按天取价</span>
+        </div>
+        <button type="submit" class="btn primary add-btn">+ 添加监控</button>
+      </form>
+    </section>
+
+    <section class="sheet" id="alertSheet" hidden>
+      <div class="sheet-head">
+        <h2>降价提醒</h2>
+      </div>
+      <div id="alertList" class="alert-list"></div>
+    </section>
+
+    <div class="workspace" id="monitorPanel">
+      <aside class="sidebar" id="routesSheet">
+        <div class="sheet-head">
+          <h2>监控航线</h2>
+          <div class="route-batch" id="routeBatchBar">
+            <button type="button" class="batch-pill" id="btnSelectAllRoutes">全选</button>
+            <button type="button" class="batch-pill danger" id="btnBatchDelete" hidden>删除所选</button>
+          </div>
+        </div>
+        <div id="routeList" class="route-list"></div>
+      </aside>
+
+      <section class="main-col detail-sheet" id="detail" hidden>
+        <div class="detail-sticky-top">
+          <div class="fb-filters sticky-filters" id="fbFilters" hidden></div>
+          <div class="sheet-head">
+            <div>
+              <h2 id="detailTitle">航线详情</h2>
+              <p id="detailSub" class="sheet-sub"></p>
+            </div>
+            <div class="sheet-actions">
+              <label class="alert-limit-field" title="空或 0 表示不按限额过滤推送">
+                提醒限额
+                <span class="alert-limit-input">
+                  <span class="alert-limit-prefix">¥</span>
+                  <input
+                    id="alertThreshold"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="不限制"
+                  />
+                </span>
+              </label>
+              <button id="btnPin" class="btn ghost" type="button">置顶</button>
+              <button id="btnToggle" class="btn ghost" type="button">暂停监控</button>
+              <button id="btnScanOne" class="btn primary" type="button">重新扫描</button>
+              <button id="btnDelete" class="btn danger" type="button">删除</button>
+              <button id="btnClose" class="btn ghost" type="button">收起</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="trend-card">
+          <div class="trend-head">
+            <h3 class="block-title">价格趋势</h3>
+            <div class="trend-controls">
+              <div class="seg" id="rangeSeg">
+                <button type="button" data-days="1" class="seg-btn">24时</button>
+                <button type="button" data-days="7" class="seg-btn active">7天</button>
+                <button type="button" data-days="30" class="seg-btn">30天</button>
+                <button type="button" data-days="" class="seg-btn">全部</button>
+              </div>
+            </div>
+          </div>
+          <div id="trendStats" class="trend-stats"></div>
+          <div id="platformFilter" class="plats filter-row"></div>
+          <div id="trendChart" class="chart"></div>
+        </div>
+
+        <h3 class="block-title">当前报价</h3>
+        <div id="compareTable" class="compare"></div>
+
+        <div id="recommendBoard" class="rec-board" hidden></div>
+
+        <div class="flights-card">
+          <div class="flights-head">
+            <h3 class="block-title">航班明细</h3>
+          </div>
+          <div id="offerTable" class="flight-board"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <div id="flightTrendModal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-trend-modal></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="flightTrendModalTitle">
+      <div class="modal-head">
+        <h3 id="flightTrendModalTitle">航班价格走势</h3>
+        <button type="button" class="modal-close" data-close-trend-modal aria-label="关闭">×</button>
+      </div>
+      <div id="flightTrendModalChart" class="chart modal-chart"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=32"></script>
+</body>
+</html>

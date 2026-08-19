@@ -534,7 +534,10 @@ def latest_compare(
     """每个平台×出发日最近一次快照；失败（无价）的平台不展示旧残缺数据。
 
     platforms 若给定，只返回配置中启用的平台（避免历史 ctrip/qunar 脏数据）。
+    仅保留航线当前监控日期范围内的快照，避免改过日期后旧日期残片混进比价/跳转。
     """
+    route = get_route(route_id)
+    allow_dates = set(route_depart_dates(route) if route else [])
     with connect() as conn:
         rows = conn.execute(
             """
@@ -552,6 +555,8 @@ def latest_compare(
             (route_id,),
         ).fetchall()
     out = [dict(r) for r in rows]
+    if allow_dates:
+        out = [r for r in out if str(r.get("depart_date") or "") in allow_dates]
     if platforms:
         allow = {p.lower() for p in platforms}
         out = [r for r in out if str(r.get("platform", "")).lower() in allow]

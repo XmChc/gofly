@@ -113,6 +113,7 @@ async function saveRouteFilters() {
 function syncAlertThresholdInput(route) {
   const input = document.getElementById("alertThreshold");
   if (!input) return;
+  if (document.activeElement === input) return;
   const v = Number(route?.alert_threshold || 0);
   input.value = v > 0 ? String(Math.round(v)) : "";
 }
@@ -401,8 +402,10 @@ async function loadHealth() {
       ? `下次 ${fmtTime(h.next_run_at)}`
       : "下次扫描 —";
     syncScanIntervalSelect(h.interval_minutes);
+    return h;
   } catch {
     document.getElementById("health").textContent = "服务异常";
+    return null;
   }
 }
 
@@ -2857,6 +2860,103 @@ document.getElementById("scanInterval")?.addEventListener("change", async (e) =>
   }
 });
 
+const livePoll = {
+  timer: null,
+  inFlight: false,
+  wasScanning: false,
+  lastScanKey: null,
+  routeStamp: "",
+  selectedStamp: "",
+};
+
+function routeDataStamp(routes) {
+  return (routes || [])
+    .map(
+      (r) =>
+        `${r.id}:${r.best_price ?? ""}:${r.observed_at ?? ""}:${r.enabled ? 1 : 0}:${r.alert_threshold ?? ""}`
+    )
+    .join("|");
+}
+
+function selectedRouteStamp(routes, selectedId) {
+  if (selectedId == null) return "";
+  const r = (routes || []).find((x) => Number(x.id) === Number(selectedId));
+  if (!r) return "";
+  return `${r.id}:${r.best_price ?? ""}:${r.observed_at ?? ""}:${r.enabled ? 1 : 0}:${r.alert_threshold ?? ""}`;
+}
+
+function isEditingDashboardUi() {
+  const el = document.activeElement;
+  if (!el || el === document.body) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+function scheduleLivePoll(scanning = false) {
+  if (livePoll.timer) clearTimeout(livePoll.timer);
+  const hidden = typeof document !== "undefined" && document.hidden;
+  const ms = hidden ? 60000 : scanning ? 3000 : 10000;
+  livePoll.timer = setTimeout(() => {
+    pollDashboard().catch(() => {});
+  }, ms);
+}
+
+async function pollDashboard() {
+  if (livePoll.inFlight) {
+    scheduleLivePoll(livePoll.wasScanning);
+    return;
+  }
+  livePoll.inFlight = true;
+  let scanning = livePoll.wasScanning;
+  try {
+    const [, health] = await Promise.all([
+      loadRoutes(),
+      loadHealth(),
+      loadAlerts(),
+    ]);
+    scanning = !!(health && health.scanning);
+    const scanKey =
+      health?.last_scan?.id != null
+        ? String(health.last_scan.id)
+        : health?.last_scan?.finished_at || null;
+    const stamp = routeDataStamp(state.routes);
+    const selStamp = selectedRouteStamp(state.routes, state.selectedId);
+    const scanJustFinished = livePoll.wasScanning && !scanning;
+    const scanKeyChanged =
+      scanKey != null &&
+      livePoll.lastScanKey != null &&
+      scanKey !== livePoll.lastScanKey;
+    const selectedChanged =
+      state.selectedId != null &&
+      selStamp !== "" &&
+      selStamp !== livePoll.selectedStamp;
+    const scanningSelected =
+      scanning &&
+      state.selectedId != null &&
+      Number(health?.scan_route_id) === Number(state.selectedId);
+
+    if (
+      state.selectedId &&
+      !isEditingDashboardUi() &&
+      (scanJustFinished || scanKeyChanged || selectedChanged || scanningSelected)
+    ) {
+      await openDetail(state.selectedId, { scroll: false, soft: true });
+    }
+
+    livePoll.wasScanning = scanning;
+    if (scanKey != null) livePoll.lastScanKey = scanKey;
+    livePoll.routeStamp = stamp;
+    livePoll.selectedStamp = selStamp;
+  } catch {
+    /* keep polling */
+  } finally {
+    livePoll.inFlight = false;
+    scheduleLivePoll(scanning);
+  }
+}
+
 (async () => {
   initDatePicker();
   bindOfferFiltersUi();
@@ -2872,8 +2972,14 @@ document.getElementById("scanInterval")?.addEventListener("change", async (e) =>
   if (routes && routes.length) {
     await openDetail(routes[0].id, { scroll: false });
   }
+  livePoll.routeStamp = routeDataStamp(state.routes);
+  livePoll.selectedStamp = selectedRouteStamp(state.routes, state.selectedId);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      pollDashboard().catch(() => {});
+    } else {
+      scheduleLivePoll(livePoll.wasScanning);
+    }
+  });
+  scheduleLivePoll(false);
 })();
-
-setInterval(() => {
-  Promise.all([loadRoutes(), loadHealth(), loadAlerts()]).catch(() => {});
-}, 30000);

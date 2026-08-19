@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=32" />
+  <link rel="stylesheet" href="/static/app.css?v=35" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -118,7 +118,11 @@
           <div class="sheet-head">
             <div>
               <h2 id="detailTitle">航线详情</h2>
-              <p id="detailSub" class="sheet-sub"></p>
+              <p id="detailSub" class="sheet-sub">
+                <span id="detailOd"></span>
+                <span class="detail-sub-sep">·</span>
+                <button type="button" id="detailDateBtn" class="detail-date-btn" title="点击修改出发日期范围">选择日期</button>
+              </p>
             </div>
             <div class="sheet-actions">
               <label class="alert-limit-field" title="空或 0 表示不按限额过滤推送">
@@ -189,6 +193,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=32"></script>
+  <script src="/static/app.js?v=35"></script>
 </body>
 </html>

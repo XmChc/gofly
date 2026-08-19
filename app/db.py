@@ -443,6 +443,34 @@ def update_route_filters(route_id: int, filters: Any) -> Optional[dict[str, Any]
     return get_route(route_id)
 
 
+def update_route_dates(
+    route_id: int,
+    depart_date: str,
+    depart_date_end: str | None = None,
+) -> Optional[dict[str, Any]]:
+    route = get_route(route_id)
+    if not route:
+        return None
+    start, end = normalize_route_dates(depart_date, depart_date_end)
+    conflict = find_route(route["origin"], route["destination"], start)
+    if conflict and int(conflict["id"]) != int(route_id):
+        raise ValueError(
+            f"同航线已有出发日 {start} 的监控，请先删除或改那条的日期"
+        )
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE watch_routes
+            SET depart_date = ?, depart_date_end = ?
+            WHERE id = ?
+            """,
+            (start, end, route_id),
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_route(route_id)
+
+
 def save_platform_result(
     route_id: int,
     platform: str,

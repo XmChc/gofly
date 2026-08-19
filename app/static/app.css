@@ -186,6 +186,29 @@ main,
   margin: 0.22rem 0 0;
   color: var(--muted);
   font-size: 0.84rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.detail-sub-sep {
+  opacity: 0.55;
+}
+.detail-date-btn {
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 0.12rem 0.55rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--accent-strong);
+  cursor: pointer;
+  line-height: 1.3;
+}
+.detail-date-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .sheet-actions {
   display: flex;
@@ -433,27 +456,40 @@ main,
 }
 .route-main {
   display: grid;
-  gap: 0.45rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: stretch;
+  min-width: 0;
+}
+.route-body {
+  display: grid;
+  gap: 0.4rem;
   min-width: 0;
 }
 .route-top,
-.route-mid,
-.route-foot {
+.route-date,
+.route-actions,
+.route-mid {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0.45rem;
+  align-items: center;
+  gap: 0.4rem;
   width: 100%;
+  min-width: 0;
 }
 .route-top {
   align-items: flex-start;
-  flex-wrap: wrap;
 }
-.route-mid { align-items: baseline; }
-.route-foot {
-  align-items: center;
-  padding-top: 0.2rem;
+.route-mid {
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: 0.15rem;
   border-top: 1px dashed #eef2f6;
+}
+.route-price-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
 }
 .route .od {
   font-weight: 700;
@@ -461,7 +497,6 @@ main,
   line-height: 1.25;
   letter-spacing: -0.01em;
   min-width: 0;
-  flex: 1 1 7rem;
 }
 .route .meta {
   color: var(--muted);
@@ -469,32 +504,38 @@ main,
   font-weight: 500;
   white-space: nowrap;
 }
-.route-quick {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.28rem;
-  flex: 1 1 auto;
-  max-width: 100%;
+.route-date {
+  justify-content: flex-start;
 }
-.route-quick .date-capsule {
+.route-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.28rem;
+}
+.route-date .date-capsule {
   display: inline-flex;
   align-items: center;
-  max-width: 9.5rem;
+  max-width: 100%;
   padding: 0.14rem 0.48rem;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: #f8fafc;
   color: var(--muted);
+  font: inherit;
   font-size: 0.7rem;
   font-weight: 650;
   white-space: nowrap;
   line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
-.route.active .route-quick .date-capsule {
+.route-date .date-capsule:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.route.active .route-date .date-capsule {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: var(--accent-strong);
@@ -579,13 +620,24 @@ main,
 .delta.up { color: var(--up); }
 .route-badges {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 0.28rem;
+  flex-shrink: 0;
+  padding-top: 0.05rem;
+}
+.route-badges:empty {
+  display: none;
 }
 .route-threshold {
   color: var(--muted);
   font-size: 0.72rem;
   white-space: nowrap;
+  margin-left: auto;
+}
+.route-threshold:empty {
+  display: none;
 }
 
 .badge-hit,
@@ -1501,6 +1553,16 @@ body.modal-open { overflow: hidden; }
   border-radius: 14px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
   padding: 0.75rem;
+}
+.date-popover.is-floating {
+  position: fixed;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 4000;
+  max-height: min(70vh, 420px);
+  overflow: auto;
 }
 .date-popover[hidden] { display: none !important; }
 .date-pop-head {

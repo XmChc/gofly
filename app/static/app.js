@@ -377,7 +377,16 @@ async function loadHealth() {
     const next = document.getElementById("nextRun");
     if (h.scanning) {
       health.classList.add("busy");
-      health.textContent = `扫描中 ${h.scan_progress || ""}`;
+      const rid = h.scan_route_id != null ? Number(h.scan_route_id) : null;
+      if (rid && String(h.scan_progress || "") === "1/1") {
+        const r = (state.routes || []).find((x) => Number(x.id) === rid);
+        const label = r
+          ? `${r.origin_name || r.origin}→${r.destination_name || r.destination}`
+          : `航线 #${rid}`;
+        health.textContent = `扫描中 · ${label}`;
+      } else {
+        health.textContent = `扫描中 ${h.scan_progress || ""}`;
+      }
     } else {
       health.classList.remove("busy");
       health.textContent = `${names || "无平台"} · 每 ${h.interval_minutes} 分钟`;
@@ -528,12 +537,13 @@ async function scanOneRoute(routeId, triggerBtn) {
   toast("正在扫描该航线…");
   try {
     const result = await api(`/api/routes/${id}/scan`, { method: "POST" });
-    await Promise.all([loadRoutes(), loadAlerts()]);
+    await patchRouteCard(id);
+    await loadAlerts();
     if (Number(state.selectedId) === id || !state.selectedId) {
-      await openDetail(id);
+      await openDetail(id, { scroll: false, soft: true });
     }
     const hits = (result.drops || result.alerts || []).length;
-    toast(hits ? `扫描完成，${hits} 班降价` : "扫描完成");
+    toast(hits ? `本航线扫描完成，${hits} 班降价` : "本航线扫描完成");
   } catch (err) {
     toast(err.message || String(err));
   } finally {
@@ -543,6 +553,40 @@ async function scanOneRoute(routeId, triggerBtn) {
     }
     loadHealth();
   }
+}
+
+/** 只刷新某一航线卡片的价格/状态，不重绘整列表（避免误以为扫描了全部）。 */
+async function patchRouteCard(routeId) {
+  const id = Number(routeId);
+  if (!id) return null;
+  const routes = sortRoutesByPin(await api("/api/routes"));
+  state.routes = routes;
+  const r = routes.find((x) => Number(x.id) === id);
+  const card = document.querySelector(`#routeList .route[data-id="${id}"]`);
+  if (!r || !card) {
+    await loadRoutes();
+    return r || null;
+  }
+  const d = deltaText(r.delta_vs_prev);
+  const priceEl = card.querySelector(".price");
+  if (priceEl) priceEl.textContent = money(r.best_price);
+  const deltaEl = card.querySelector(".delta");
+  if (deltaEl) {
+    deltaEl.className = `delta ${d.cls}`;
+    deltaEl.textContent = d.html.replace("较上期 ", "");
+  }
+  const hit = card.querySelector(".badge-hit");
+  const shouldHit = r.delta_vs_prev != null && Number(r.delta_vs_prev) < 0;
+  if (shouldHit && !hit) {
+    const badges = card.querySelector(".route-badges");
+    if (badges) {
+      badges.insertAdjacentHTML("beforeend", `<span class="badge-hit">降价</span>`);
+    }
+  } else if (!shouldHit && hit) {
+    hit.remove();
+  }
+  card.classList.toggle("paused", !r.enabled);
+  return r;
 }
 
 async function deleteRoutesByIds(ids, { confirmMsg } = {}) {
@@ -633,29 +677,33 @@ async function loadRoutes() {
             <input class="route-check-input" type="checkbox" data-id="${r.id}" ${checked ? "checked" : ""} />
           </label>
           <span class="route-main">
-            <span class="route-top">
-              <span class="od">${r.origin_name || r.origin} → ${r.destination_name || r.destination}</span>
-              <span class="route-quick" title="${dateTitle}">
-                <span class="date-capsule">${dateLabel}</span>
+            <span class="route-body">
+              <span class="route-top">
+                <span class="od">${r.origin_name || r.origin} → ${r.destination_name || r.destination}</span>
+              </span>
+              <span class="route-date" title="${dateTitle}">
+                <button type="button" class="date-capsule" data-act="edit-date" data-id="${r.id}" title="点击修改日期范围">${dateLabel}</button>
+              </span>
+              <span class="route-actions">
                 <button type="button" class="act-pill" data-act="toggle" data-id="${r.id}" title="${toggleLabel}监控">${toggleLabel}</button>
                 <button type="button" class="act-pill" data-act="scan" data-id="${r.id}" title="重新扫描">扫描</button>
                 <button type="button" class="act-pill danger" data-act="delete" data-id="${r.id}" title="删除">删除</button>
               </span>
+              <span class="route-mid">
+                <span class="route-price-group">
+                  <span class="price">${money(r.best_price)}</span>
+                  <span class="delta ${d.cls}">${d.html.replace("较上期 ", "")}</span>
+                </span>
+                <span class="route-threshold">${thresholdText}</span>
+              </span>
             </span>
-            <span class="route-mid">
-              <span class="price">${money(r.best_price)}</span>
-              <span class="delta ${d.cls}">${d.html.replace("较上期 ", "")}</span>
-            </span>
-            <span class="route-foot">
-              <span class="route-badges">${statusMark}${pinMark}${hit}${pausedMark}</span>
-              <span class="route-threshold">${thresholdText}</span>
-            </span>
+            <span class="route-badges">${statusMark}${pinMark}${hit}${pausedMark}</span>
           </span>
         </div>`;
     })
     .join("");
 
-  const isQuickTarget = (t) => t.closest(".route-check, .act-pill");
+  const isQuickTarget = (t) => t.closest(".route-check, .act-pill, .date-capsule");
 
   box.querySelectorAll(".route").forEach((el) => {
     const open = () => openDetail(Number(el.dataset.id));
@@ -680,7 +728,7 @@ async function loadRoutes() {
     });
   });
 
-  box.querySelectorAll(".act-pill").forEach((btn) => {
+  box.querySelectorAll(".act-pill, .date-capsule[data-act]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -695,11 +743,13 @@ async function loadRoutes() {
 }
 
 async function openDetail(id, opts = {}) {
-  const { scroll = true } = opts;
+  const { scroll = true, soft = false } = opts;
   state.selectedId = id;
-  state.hiddenFlights = new Set();
-  state.pinnedFlights = new Set();
-  state.lastFlightSeries = {};
+  if (!soft) {
+    state.hiddenFlights = new Set();
+    state.pinnedFlights = new Set();
+    state.lastFlightSeries = {};
+  }
   const detail = document.getElementById("detail");
   detail.hidden = false;
   syncPinButton();
@@ -707,18 +757,27 @@ async function openDetail(id, opts = {}) {
   const data = await api(`/api/routes/${id}/compare`);
   const r = data.route;
   state.currentRoute = r;
-  applyRouteDefaultFilters(r);
+  if (!soft) applyRouteDefaultFilters(r);
   document.getElementById("detailTitle").textContent =
     `${r.origin_name || r.origin} → ${r.destination_name || r.destination}`;
-  document.getElementById("detailSub").textContent =
-    `${r.origin}–${r.destination} · ${formatRouteDateMeta(r)}`;
+  const odEl = document.getElementById("detailOd");
+  const dateBtn = document.getElementById("detailDateBtn");
+  if (odEl) odEl.textContent = `${r.origin}–${r.destination}`;
+  if (dateBtn) {
+    dateBtn.textContent = formatRouteDateMeta(r);
+    dateBtn.hidden = false;
+    dateBtn.dataset.routeId = String(r.id);
+  } else {
+    document.getElementById("detailSub").textContent =
+      `${r.origin}–${r.destination} · ${formatRouteDateMeta(r)}`;
+  }
   syncAlertThresholdInput(r);
   document.getElementById("btnToggle").textContent = r.enabled
     ? "暂停监控"
     : "恢复监控";
   syncPinButton();
 
-  await loadRoutes();
+  if (!soft) await loadRoutes();
   state.comparePlatforms = data.platforms || [];
 
   const priced = data.platforms
@@ -749,7 +808,7 @@ async function openDetail(id, opts = {}) {
   const allOffers = [...direct, ...transfer];
   state.offersCache = allOffers;
   state.offerRoute = r;
-  state.offerTab = "all";
+  if (!soft) state.offerTab = "all";
 
   if (!allOffers.length) {
     hideOfferFilters();
@@ -2296,8 +2355,12 @@ function initDatePicker() {
   let rangeEnd = (inputEnd && inputEnd.value) || rangeStart;
   let pickingEnd = false;
   let hoverDate = null;
+  let editingRouteId = null;
+  let formBackup = null;
+  let popAnchor = null;
   let view = parseDateValue(rangeStart) || new Date();
   view = new Date(view.getFullYear(), view.getMonth(), 1);
+  const popHomeParent = pop.parentElement;
 
   function orderedRange(start, end) {
     if (!start) return { start: "", end: "" };
@@ -2305,20 +2368,104 @@ function initDatePicker() {
     return start <= end ? { start, end } : { start: end, end: start };
   }
 
+  function clearPopPosition() {
+    pop.classList.remove("is-floating");
+    pop.style.position = "";
+    pop.style.left = "";
+    pop.style.top = "";
+    pop.style.zIndex = "";
+    pop.style.width = "";
+  }
+
+  function mountPopToBody() {
+    if (pop.parentElement !== document.body) {
+      document.body.appendChild(pop);
+    }
+  }
+
+  function restorePopHome() {
+    if (popHomeParent && pop.parentElement !== popHomeParent) {
+      popHomeParent.appendChild(pop);
+    }
+    clearPopPosition();
+    popAnchor = null;
+  }
+
+  function placePopNear(anchorEl) {
+    popAnchor = anchorEl || trigger;
+    mountPopToBody();
+    const rect = popAnchor.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    let top = rect.bottom + 6;
+    // Prefer below; if not enough room, flip above.
+    const estHeight = Math.min(360, window.innerHeight - 24);
+    if (top + estHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - estHeight - 6);
+    }
+    pop.classList.add("is-floating");
+    pop.style.position = "fixed";
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    pop.style.width = `${width}px`;
+    pop.style.zIndex = "4000";
+  }
+
+  function repositionPop() {
+    if (pop.hidden || !popAnchor) return;
+    placePopNear(popAnchor);
+  }
+
   function syncInputs() {
     const { start, end } = orderedRange(rangeStart, rangeEnd || rangeStart);
     input.value = start;
     if (inputEnd) inputEnd.value = end && end !== start ? end : "";
     const text = trigger.querySelector(".date-trigger-text");
-    if (text) text.textContent = formatDateRangeZh(start, end);
+    if (text && !editingRouteId) text.textContent = formatDateRangeZh(start, end);
     if (hint) {
-      if (pickingEnd && rangeStart) {
+      if (editingRouteId) {
+        if (pickingEnd && rangeStart) {
+          hint.textContent = `修改监控日期：已选 ${formatDateZhShort(rangeStart)}，再点结束日`;
+        } else {
+          hint.textContent = "修改监控日期：点击开始日，再点结束日";
+        }
+      } else if (pickingEnd && rangeStart) {
         hint.textContent = `已选 ${formatDateZhShort(rangeStart)}，再点结束日`;
       } else if (start && end && end !== start) {
         hint.textContent = `已选 ${formatDateRangeZh(start, end)}`;
       } else {
         hint.textContent = "点击选择开始日，再点结束日";
       }
+    }
+  }
+
+  function restoreFormBackup() {
+    if (!formBackup) return;
+    rangeStart = formBackup.start || defaultDate();
+    rangeEnd = formBackup.end || rangeStart;
+    formBackup = null;
+    syncInputs();
+  }
+
+  async function finishEditRouteDates(start, end) {
+    const id = editingRouteId;
+    editingRouteId = null;
+    try {
+      const route = await api(`/api/routes/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          depart_date: start,
+          depart_date_end: end || start,
+        }),
+      });
+      toast(`已更新日期：${formatRouteDateMeta(route)}`);
+      restoreFormBackup();
+      await loadRoutes();
+      if (Number(state.selectedId) === Number(id)) await openDetail(id, { scroll: false });
+    } catch (err) {
+      toast(err.message || String(err));
+      restoreFormBackup();
+      await loadRoutes();
     }
   }
 
@@ -2329,21 +2476,49 @@ function initDatePicker() {
     hoverDate = null;
     syncInputs();
     render();
-    if (close) closePop();
+    if (!close) return;
+    const { start: s, end: e } = orderedRange(rangeStart, rangeEnd);
+    pop.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    restorePopHome();
+    if (editingRouteId) {
+      void finishEditRouteDates(s, e);
+      return;
+    }
   }
 
-  function openPop() {
+  function openPop(anchorEl) {
     const cur = parseDateValue(rangeStart) || new Date();
     view = new Date(cur.getFullYear(), cur.getMonth(), 1);
     pickingEnd = false;
     hoverDate = null;
     render();
+    syncInputs();
     pop.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
+    placePopNear(anchorEl || trigger);
   }
 
-  function closePop() {
-    // If user closed mid-pick, keep a single-day selection.
+  function closePop({ commitSingle = false } = {}) {
+    if (editingRouteId) {
+      // Cancel edit unless user finished a single-day reselect mid-flow with commitSingle
+      if (commitSingle && rangeStart && !pickingEnd) {
+        const { start, end } = orderedRange(rangeStart, rangeEnd || rangeStart);
+        pop.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        restorePopHome();
+        void finishEditRouteDates(start, end);
+        return;
+      }
+      editingRouteId = null;
+      pickingEnd = false;
+      hoverDate = null;
+      pop.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+      restorePopHome();
+      restoreFormBackup();
+      return;
+    }
     if (pickingEnd && rangeStart) {
       rangeEnd = rangeStart;
       pickingEnd = false;
@@ -2351,6 +2526,7 @@ function initDatePicker() {
     }
     pop.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
+    restorePopHome();
   }
 
   function previewBounds() {
@@ -2394,8 +2570,28 @@ function initDatePicker() {
     grid.innerHTML = cells.join("");
   }
 
+  function beginEditRouteDates(route, anchorEl) {
+    if (!route?.id) return;
+    if (!formBackup) {
+      formBackup = {
+        start: input.value || defaultDate(),
+        end: (inputEnd && inputEnd.value) || "",
+      };
+    }
+    editingRouteId = Number(route.id);
+    rangeStart = route.depart_date || "";
+    rangeEnd = route.depart_date_end || route.depart_date || "";
+    pickingEnd = false;
+    hoverDate = null;
+    openPop(anchorEl);
+  }
+
   trigger.addEventListener("click", () => {
-    if (pop.hidden) openPop();
+    if (editingRouteId) {
+      closePop();
+      return;
+    }
+    if (pop.hidden) openPop(trigger);
     else closePop();
   });
   pop.addEventListener("click", (e) => {
@@ -2438,19 +2634,34 @@ function initDatePicker() {
   });
   document.addEventListener("pointerdown", (e) => {
     if (pop.hidden) return;
-    // Use composedPath: cell clicks re-render via innerHTML and detach e.target,
-    // so root.contains(e.target) would falsely look "outside".
     const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-    if (path.includes(root) || root.contains(e.target)) return;
+    if (path.includes(pop) || path.includes(root) || pop.contains(e.target) || root.contains(e.target)) {
+      return;
+    }
+    if (e.target.closest?.(".date-capsule[data-act='edit-date'], #detailDateBtn, #depart_date_display")) {
+      return;
+    }
     closePop();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !pop.hidden) closePop();
   });
+  // Keep floating calendar on screen while scrolling; do not close.
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (!pop.hidden) repositionPop();
+    },
+    true
+  );
+  window.addEventListener("resize", () => {
+    if (!pop.hidden) repositionPop();
+  });
 
   initDatePicker.setValue = (v, close = true) => setRange(v, v, { close });
   initDatePicker.setRange = setRange;
   initDatePicker.getRange = () => orderedRange(rangeStart, rangeEnd || rangeStart);
+  initDatePicker.editRouteDates = beginEditRouteDates;
   setRange(input.value || defaultDate(), (inputEnd && inputEnd.value) || input.value || defaultDate(), {
     close: false,
   });
@@ -2464,6 +2675,14 @@ document.getElementById("rangeSeg").addEventListener("click", (e) => {
   const raw = btn.dataset.days;
   state.trendDays = raw === "" ? null : Number(raw);
   if (state.selectedId) renderTrend(state.selectedId);
+});
+
+document.getElementById("detailDateBtn")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const route = state.currentRoute;
+  if (!route) return;
+  initDatePicker.editRouteDates?.(route, e.currentTarget);
 });
 
 document.getElementById("addForm").addEventListener("submit", async (e) => {

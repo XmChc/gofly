@@ -15,7 +15,7 @@ from app.cities import CITY_NAMES, CityResolveError, resolve_route_inputs, sugge
 from app.config import get_config
 from app.scheduler import reschedule, scheduler_status, start_scheduler, stop_scheduler
 from app.services.demo_history import backfill_demo_history
-from app.services.monitor import get_scan_state, run_all_enabled, run_route
+from app.services.monitor import get_scan_state, run_all_enabled, run_one_exclusive
 from app.services.notify import notify_status, send_drop_digest
 
 logging.basicConfig(
@@ -44,6 +44,8 @@ class RoutePatch(BaseModel):
     enabled: Optional[bool] = None
     alert_threshold: Optional[float] = None
     filters: Optional[dict[str, Any]] = None
+    depart_date: Optional[str] = None
+    depart_date_end: Optional[str] = None
 
 
 class ResolveIn(BaseModel):
@@ -89,6 +91,7 @@ def health() -> dict[str, Any]:
         "next_run_at": sched.get("next_run_at"),
         "scanning": scan.get("scanning"),
         "scan_progress": scan.get("progress"),
+        "scan_route_id": scan.get("current_route_id"),
         "last_scan": last,
         "notify": notify_status(),
     }
@@ -202,12 +205,19 @@ def api_patch_route(route_id: int, body: RoutePatch) -> dict[str, Any]:
     route = db.get_route(route_id)
     if not route:
         raise HTTPException(404, "route not found")
-    if body.enabled is not None:
-        route = db.set_route_enabled(route_id, body.enabled)
-    if body.alert_threshold is not None:
-        route = db.update_route_threshold(route_id, body.alert_threshold)
-    if body.filters is not None:
-        route = db.update_route_filters(route_id, body.filters)
+    try:
+        if body.enabled is not None:
+            route = db.set_route_enabled(route_id, body.enabled)
+        if body.alert_threshold is not None:
+            route = db.update_route_threshold(route_id, body.alert_threshold)
+        if body.filters is not None:
+            route = db.update_route_filters(route_id, body.filters)
+        if body.depart_date is not None or body.depart_date_end is not None:
+            start = body.depart_date or route["depart_date"]
+            end = body.depart_date_end or body.depart_date or route.get("depart_date_end")
+            route = db.update_route_dates(route_id, start, end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return route  # type: ignore[return-value]
 
 
@@ -285,9 +295,10 @@ def api_scan_one(route_id: int) -> dict[str, Any]:
     route = db.get_route(route_id)
     if not route:
         raise HTTPException(404, "route not found")
-    if get_scan_state()["scanning"]:
+    result = run_one_exclusive(route)
+    if result.get("busy"):
         raise HTTPException(409, "正在扫描中，请稍候")
-    return run_route(route)
+    return result
 
 
 @app.post("/api/scan")

@@ -159,19 +159,55 @@ def run_route(
     }
 
 
-def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
-    if get_scan_state()["scanning"]:
-        return {"busy": True, "results": [], "run_id": None}
+def run_one_exclusive(route: dict[str, Any], *, trigger: str = "manual_one") -> dict[str, Any]:
+    """扫描单条航线并占用扫描锁，避免与「扫描全部」/定时任务交叉改价。"""
+    rid = int(route["id"])
+    with _state_lock:
+        if _scan_state["scanning"]:
+            return {"busy": True, "route_id": rid, "results": [], "drops": []}
+        _scan_state.update(
+            {
+                "scanning": True,
+                "trigger": trigger,
+                "started_at": db.utc_now(),
+                "current_route_id": rid,
+                "progress": "1/1",
+            }
+        )
+    try:
+        logger.info(
+            "scan one %s %s->%s %s",
+            rid,
+            route["origin"],
+            route["destination"],
+            db.route_date_label(route) or route["depart_date"],
+        )
+        return run_route(route)
+    finally:
+        _set_scan_state(
+            scanning=False,
+            trigger=None,
+            started_at=None,
+            current_route_id=None,
+            progress="0/0",
+        )
 
+
+def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
     routes = db.list_routes(enabled_only=True)
-    run_id = db.begin_scan_run(trigger, len(routes))
-    _set_scan_state(
-        scanning=True,
-        trigger=trigger,
-        started_at=db.utc_now(),
-        current_route_id=None,
-        progress=f"0/{len(routes)}",
-    )
+    with _state_lock:
+        if _scan_state["scanning"]:
+            return {"busy": True, "results": [], "run_id": None}
+        run_id = db.begin_scan_run(trigger, len(routes))
+        _scan_state.update(
+            {
+                "scanning": True,
+                "trigger": trigger,
+                "started_at": db.utc_now(),
+                "current_route_id": None,
+                "progress": f"0/{len(routes)}",
+            }
+        )
 
     out: list[dict[str, Any]] = []
     all_drops: list[dict[str, Any]] = []

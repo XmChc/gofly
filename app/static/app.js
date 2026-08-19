@@ -23,6 +23,9 @@ const state = {
   comparePlatforms: [],
   routes: [],
   checkedRouteIds: new Set(),
+  notifyRouteId: null,
+  notifyDraftEmails: [],
+  hasDefaultMail: false,
 };
 
 const PINNED_ROUTES_KEY = "gofly.pinnedRoutes";
@@ -265,14 +268,19 @@ function fmtTime(iso) {
   return `${get("month")}/${get("day")} ${hour}:${get("minute")}`;
 }
 
-function toast(msg) {
+function toast(msg, opts = {}) {
   const el = document.getElementById("toast");
+  const kind = opts.type === "error" ? "error" : opts.type === "warn" ? "warn" : "";
   el.textContent = msg;
+  el.classList.toggle("toast-error", kind === "error");
+  el.classList.toggle("toast-warn", kind === "warn");
   el.hidden = false;
   clearTimeout(toast._t);
+  const ms = Number(opts.duration) || (kind === "error" ? 5200 : 2800);
   toast._t = setTimeout(() => {
     el.hidden = true;
-  }, 2800);
+    el.classList.remove("toast-error", "toast-warn");
+  }, ms);
 }
 
 async function api(path, opts = {}) {
@@ -402,6 +410,7 @@ async function loadHealth() {
       ? `下次 ${fmtTime(h.next_run_at)}`
       : "下次扫描 —";
     syncScanIntervalSelect(h.interval_minutes);
+    state.hasDefaultMail = Boolean(h.notify?.has_default_mail);
     return h;
   } catch {
     document.getElementById("health").textContent = "服务异常";
@@ -423,7 +432,7 @@ function syncScanIntervalSelect(minutes) {
 }
 
 async function loadAlerts() {
-  const alerts = await api("/api/alerts?limit=8");
+  const alerts = await api("/api/alerts?limit=40");
   const sheet = document.getElementById("alertSheet");
   const box = document.getElementById("alertList");
   if (!alerts.length) {
@@ -434,18 +443,78 @@ async function loadAlerts() {
   box.innerHTML = alerts
     .map((a) => {
       const od = `${a.origin_name || a.origin} → ${a.destination_name || a.destination}`;
+      const dayRaw = String(a.depart_date || "").trim() || String(a.date_label || "").trim();
+      const dayCap = dayRaw.includes("~")
+        ? dayRaw
+        : formatRouteDateCapsule(dayRaw);
       const prev = a.threshold != null ? Number(a.threshold) : null;
       const cur = Number(a.price);
-      const drop =
+      const dropAmt =
         prev != null && Number.isFinite(prev) && Number.isFinite(cur) && cur < prev
-          ? `↓${Math.round(prev - cur)}`
-          : "";
-      return `<div class="alert-item">
-        <div>${od} · ${a.date_label || a.depart_date}<div class="meta" style="color:var(--muted);font-size:.78rem;margin-top:.15rem">${PLATFORM_LABEL[a.platform] || a.platform} · ${fmtTime(a.observed_at)}</div></div>
-        <div><strong>${money(a.price)}</strong><div class="meta" style="color:var(--muted);font-size:.75rem">${drop ? `${drop} · 原 ${money(prev)}` : "降价"}</div></div>
+          ? Math.round(prev - cur)
+          : null;
+      const fn = String(a.flight_no || "").trim();
+      const airline = String(a.airline || "").trim();
+      let flightLabel = "";
+      if (fn) {
+        flightLabel =
+          airline && !fn.toUpperCase().startsWith(airline.slice(0, 2).toUpperCase())
+            ? `${airline} ${fn}`
+            : fn;
+      } else if (airline) {
+        flightLabel = airline;
+      }
+      const dep = String(a.depart_time || "").slice(-5);
+      const platform = PLATFORM_LABEL[a.platform] || a.platform || "";
+      const pills = [
+        dayCap && dayCap !== "—" ? `<span class="alert-pill">${dayCap}</span>` : "",
+        flightLabel
+          ? `<span class="alert-pill">${flightLabel}</span>`
+          : `<span class="alert-pill muted">未识别航班</span>`,
+        dep ? `<span class="alert-pill">${dep}</span>` : "",
+        platform ? `<span class="alert-pill">${platform}</span>` : "",
+        `<span class="alert-pill muted">${fmtTime(a.observed_at)}</span>`,
+      ]
+        .filter(Boolean)
+        .join("");
+      const rid = Number(a.route_id);
+      const dayAttr = escapeAttr(String(a.depart_date || "").trim());
+      const fnAttr = escapeAttr(fn);
+      const dropHtml =
+        dropAmt != null
+          ? `<span class="alert-drop">↓${dropAmt}</span><span class="alert-prev">原 ${money(prev)}</span>`
+          : `<span class="alert-drop">降价</span>`;
+      return `<div class="alert-item" role="button" tabindex="0" data-route-id="${rid}" data-flight-no="${fnAttr}" data-depart-date="${dayAttr}" title="查看对应航班">
+        <div class="alert-main">
+          <div class="alert-route">${od}</div>
+          <div class="alert-pills">${pills}</div>
+        </div>
+        <div class="alert-price">
+          <strong>${money(a.price)}</strong>
+          <div class="alert-price-meta">${dropHtml}</div>
+        </div>
       </div>`;
     })
     .join("");
+
+  box.querySelectorAll(".alert-item").forEach((el) => {
+    const open = () => {
+      const id = Number(el.dataset.routeId);
+      if (!Number.isFinite(id) || id <= 0) return;
+      openDetail(id, {
+        focusFlight: el.dataset.flightNo || "",
+        focusDate: el.dataset.departDate || "",
+        requireFocus: true,
+      });
+    };
+    el.addEventListener("click", open);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open();
+      }
+    });
+  });
 }
 
 function formatRouteDateCapsule(v) {
@@ -630,6 +699,7 @@ async function deleteRoutesByIds(ids, { confirmMsg } = {}) {
 async function handleRouteQuickAct(act, routeId, triggerBtn) {
   const id = Number(routeId);
   if (!id) return;
+  if (act === "notify") return openNotifyGroupModal(id);
   if (act === "toggle") return toggleRouteEnabled(id);
   if (act === "scan") return scanOneRoute(id, triggerBtn);
   if (act === "delete") return deleteRoutesByIds([id]);
@@ -671,6 +741,11 @@ async function loadRoutes() {
         : "";
       const threshold = Number(r.alert_threshold || 0);
       const thresholdText = threshold > 0 ? `限额 ¥${Math.round(threshold)}` : "";
+      const emails = Array.isArray(r.notify_emails) ? r.notify_emails : [];
+      const notifyCls = emails.length ? "has-notify" : "";
+      const notifyTitle = emails.length
+        ? `接收组：${emails.join("、")}`
+        : "配置推送接收组";
       const dateLabel = formatRouteDateCapsuleRange(r);
       const dateTitle = formatRouteDateMeta(r);
       const toggleLabel = r.enabled ? "暂停" : "恢复";
@@ -688,6 +763,7 @@ async function loadRoutes() {
                 <button type="button" class="date-capsule" data-act="edit-date" data-id="${r.id}" title="点击修改日期范围">${dateLabel}</button>
               </span>
               <span class="route-actions">
+                <button type="button" class="act-pill ${notifyCls}" data-act="notify" data-id="${r.id}" title="${notifyTitle}">接收</button>
                 <button type="button" class="act-pill" data-act="toggle" data-id="${r.id}" title="${toggleLabel}监控">${toggleLabel}</button>
                 <button type="button" class="act-pill" data-act="scan" data-id="${r.id}" title="重新扫描">扫描</button>
                 <button type="button" class="act-pill danger" data-act="delete" data-id="${r.id}" title="删除">删除</button>
@@ -746,7 +822,66 @@ async function loadRoutes() {
 }
 
 async function openDetail(id, opts = {}) {
-  const { scroll = true, soft = false } = opts;
+  const {
+    scroll = true,
+    soft = false,
+    focusFlight = "",
+    focusDate = "",
+    requireFocus = false,
+  } = opts;
+  const focusFn = String(focusFlight || "").trim();
+  const focusDay = String(focusDate || "").trim();
+
+  const data = await api(`/api/routes/${id}/compare`);
+  const r = data.route;
+  const priced = (data.platforms || [])
+    .filter((p) => p.min_price != null)
+    .sort((a, b) => a.min_price - b.min_price);
+  const merged = priced.flatMap((p) =>
+    (p.offers || []).map((o) => {
+      const meta = normalizeMeta(o.meta);
+      return {
+        ...o,
+        meta,
+        platform: p.platform,
+        origin: r.origin,
+        destination: r.destination,
+        depart_date: p.depart_date || o.depart_date || r.depart_date,
+        _complete: !!(o.depart_time && o.arrive_time && o.flight_no),
+      };
+    })
+  );
+
+  const matchFocusOffer = (list) => {
+    if (!focusFn) return null;
+    const exact = list.find((o) => {
+      const sameFn =
+        String(o.flight_no || "").trim().toUpperCase() === focusFn.toUpperCase();
+      if (!sameFn) return false;
+      if (!focusDay) return true;
+      return String(o.depart_date || "").trim() === focusDay;
+    });
+    if (exact) return exact;
+    if (focusDay) return null;
+    return list.find(
+      (o) =>
+        String(o.flight_no || "").trim().toUpperCase() === focusFn.toUpperCase()
+    );
+  };
+
+  if (requireFocus && focusFn) {
+    const hit = matchFocusOffer(merged);
+    if (!hit) {
+      toast(
+        `未找到航班 ${focusFn}${focusDay ? ` · ${focusDay}` : ""}：当前报价里没有这班，可能已下架或尚未扫到该日`,
+        { type: "error" }
+      );
+      return false;
+    }
+  }
+
+  const focusHit = focusFn ? matchFocusOffer(merged) : null;
+
   state.selectedId = id;
   if (!soft) {
     state.hiddenFlights = new Set();
@@ -757,10 +892,16 @@ async function openDetail(id, opts = {}) {
   detail.hidden = false;
   syncPinButton();
 
-  const data = await api(`/api/routes/${id}/compare`);
-  const r = data.route;
   state.currentRoute = r;
   if (!soft) applyRouteDefaultFilters(r);
+  let filtersRelaxed = false;
+  if (focusHit) {
+    const next = filtersToRevealOffer(focusHit, state.offerFilters);
+    if (!filtersEqual(next, state.offerFilters)) {
+      state.offerFilters = next;
+      filtersRelaxed = true;
+    }
+  }
   document.getElementById("detailTitle").textContent =
     `${r.origin_name || r.origin} → ${r.destination_name || r.destination}`;
   const odEl = document.getElementById("detailOd");
@@ -783,24 +924,7 @@ async function openDetail(id, opts = {}) {
   if (!soft) await loadRoutes();
   state.comparePlatforms = data.platforms || [];
 
-  const priced = data.platforms
-    .filter((p) => p.min_price != null)
-    .sort((a, b) => a.min_price - b.min_price);
   const offerBox = document.getElementById("offerTable");
-  const merged = priced.flatMap((p) =>
-    (p.offers || []).map((o) => {
-      const meta = normalizeMeta(o.meta);
-      return {
-        ...o,
-        meta,
-        platform: p.platform,
-        origin: r.origin,
-        destination: r.destination,
-        depart_date: p.depart_date || o.depart_date || r.depart_date,
-        _complete: !!(o.depart_time && o.arrive_time && o.flight_no),
-      };
-    })
-  );
   const complete = merged.filter((o) => o._complete);
   const pool = (complete.length >= 3 ? complete : merged).sort(
     (a, b) => a.price - b.price
@@ -808,6 +932,19 @@ async function openDetail(id, opts = {}) {
   // 直飞/中转都保留，避免被低价中转挤掉直飞或反之
   const direct = pool.filter((o) => !isTransferOffer(o)).slice(0, 20);
   const transfer = pool.filter((o) => isTransferOffer(o)).slice(0, 30);
+  if (focusFn) {
+    const hit = matchFocusOffer(pool) || matchFocusOffer(merged);
+    if (hit) {
+      const bucket = isTransferOffer(hit) ? transfer : direct;
+      const already = bucket.some(
+        (o) =>
+          String(o.flight_no || "").trim().toUpperCase() ===
+            String(hit.flight_no || "").trim().toUpperCase() &&
+          String(o.depart_date || "") === String(hit.depart_date || "")
+      );
+      if (!already) bucket.unshift(hit);
+    }
+  }
   const allOffers = [...direct, ...transfer];
   state.offersCache = allOffers;
   state.offerRoute = r;
@@ -828,6 +965,13 @@ async function openDetail(id, opts = {}) {
   if (scroll) {
     document.getElementById("monitorPanel").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  if (focusFn) {
+    window.setTimeout(() => scrollToFlight(focusFn, focusDay), scroll ? 280 : 60);
+  }
+  if (filtersRelaxed) {
+    toast("已临时放宽筛选以显示该航班");
+  }
+  return true;
 }
 
 function offerDurationMin(o) {
@@ -871,6 +1015,22 @@ function applyOfferFilters(offers) {
     if (directOnly === false && !isTransferOffer(o)) return false;
     return true;
   });
+}
+
+/** 仅放宽挡住目标航班的筛选项，其余保持不变（不写回监控默认）。 */
+function filtersToRevealOffer(offer, base) {
+  const f = normalizeOfferFilters(base || state.offerFilters);
+  if (!offer) return f;
+  if (f.bag20 && !offerHas20kg(offer)) f.bag20 = false;
+  if (f.directOnly === true && isTransferOffer(offer)) f.directOnly = null;
+  if (f.directOnly === false && !isTransferOffer(offer)) f.directOnly = null;
+  if (f.sameDay === true && !isSameDayArrival(offer)) f.sameDay = null;
+  if (f.sameDay === false && isSameDayArrival(offer)) f.sameDay = null;
+  if (f.maxDuration != null) {
+    const dur = offerDurationMin(offer);
+    if (dur == null || dur > f.maxDuration) f.maxDuration = null;
+  }
+  return f;
 }
 
 function iataCodesFromFlight(flightNo) {
@@ -1687,27 +1847,48 @@ function flightRowId(flightNo) {
   return encodeURIComponent(String(flightNo || "")).replace(/%/g, "_");
 }
 
-function scrollToFlight(flightNo) {
+function scrollToFlight(flightNo, departDate = "") {
   if (!flightNo) return;
   const board = document.getElementById("offerTable");
   if (!board) return;
+  const fn = String(flightNo).trim();
+  const day = String(departDate || "").trim();
 
-  let row = board.querySelector(`.fb-row[data-flight-no="${CSS.escape(flightNo)}"]`);
+  const findRow = () => {
+    if (day) {
+      const exact = board.querySelector(
+        `.fb-row[data-flight-no="${CSS.escape(fn)}"][data-depart-date="${CSS.escape(day)}"]`
+      );
+      if (exact) return exact;
+    }
+    return board.querySelector(`.fb-row[data-flight-no="${CSS.escape(fn)}"]`);
+  };
+
+  let row = findRow();
   if (!row) {
-    const inCache = (state.offersCache || []).some((o) => o.flight_no === flightNo);
+    const inCache = (state.offersCache || []).some((o) => {
+      const sameFn =
+        String(o.flight_no || "").trim().toUpperCase() === fn.toUpperCase();
+      if (!sameFn) return false;
+      if (!day) return true;
+      return String(o.depart_date || "").trim() === day;
+    });
     if (inCache) {
       const prevFilters = { ...state.offerFilters };
       state.offerFilters = { maxDuration: null, sameDay: null, bag20: false, directOnly: null };
       state.offerTab = "all";
       paintFlightBoard();
-      row = board.querySelector(`.fb-row[data-flight-no="${CSS.escape(flightNo)}"]`);
+      row = findRow();
       state.offerFilters = prevFilters;
       // 定位后再恢复默认筛选展示，避免把临时放宽写回监控
       window.setTimeout(() => paintFlightBoard(), 1700);
     }
   }
   if (!row) {
-    toast(`列表中未找到航班 ${flightNo}`);
+    toast(
+      `未找到航班 ${fn}${day ? ` · ${day}` : ""}：当前报价列表里没有这班，可能已下架、被筛选掉，或尚未扫到该日`,
+      { type: "error" }
+    );
     return;
   }
 
@@ -2114,10 +2295,183 @@ function bindFlightTrendModal() {
     el.addEventListener("click", closeFlightTrendModal);
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeFlightTrendModal();
+    if (e.key !== "Escape") return;
+    closeNotifyGroupModal();
+    closeFlightTrendModal();
   });
   window.addEventListener("resize", () => {
     if (!modal.hidden) state.flightModalChart?.resize();
+  });
+}
+
+function normalizeEmailList(list) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of list || []) {
+    const email = String(raw || "").trim().toLowerCase();
+    if (!email || !email.includes("@") || seen.has(email)) continue;
+    seen.add(email);
+    out.push(email);
+  }
+  return out;
+}
+
+function renderNotifyChips() {
+  const box = document.getElementById("notifyEmailChips");
+  if (!box) return;
+  const emails = state.notifyDraftEmails || [];
+  if (!emails.length) {
+    box.innerHTML = `<div class="notify-empty">尚未添加邮箱，将使用全局默认</div>`;
+    return;
+  }
+  box.innerHTML = emails
+    .map(
+      (email) => `
+      <span class="notify-chip">
+        ${escapeHtml(email)}
+        <button type="button" data-remove-email="${escapeAttr(email)}" aria-label="移除">×</button>
+      </span>`
+    )
+    .join("");
+  box.querySelectorAll("[data-remove-email]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const email = btn.getAttribute("data-remove-email");
+      state.notifyDraftEmails = state.notifyDraftEmails.filter((x) => x !== email);
+      renderNotifyChips();
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function closeNotifyGroupModal() {
+  const modal = document.getElementById("notifyGroupModal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  const trendOpen = document.getElementById("flightTrendModal")?.hidden === false;
+  if (!trendOpen) document.body.classList.remove("modal-open");
+  state.notifyRouteId = null;
+  state.notifyDraftEmails = [];
+}
+
+async function openNotifyGroupModal(routeId) {
+  const route =
+    (state.routes || []).find((r) => Number(r.id) === Number(routeId)) ||
+    (Number(state.currentRoute?.id) === Number(routeId) ? state.currentRoute : null);
+  if (!route) {
+    toast("未找到该航线");
+    return;
+  }
+  if (!state.hasDefaultMail) {
+    try {
+      await loadHealth();
+    } catch {
+      /* ignore */
+    }
+  }
+  const modal = document.getElementById("notifyGroupModal");
+  if (!modal) return;
+  state.notifyRouteId = Number(route.id);
+  state.notifyDraftEmails = normalizeEmailList(route.notify_emails);
+  const sub = document.getElementById("notifyGroupSub");
+  if (sub) {
+    sub.textContent = `${route.origin_name || route.origin} → ${
+      route.destination_name || route.destination
+    } · ${formatRouteDateMeta(route)}`;
+  }
+  const hint = document.getElementById("notifyGroupHint");
+  if (hint) {
+    hint.textContent = state.hasDefaultMail
+      ? "已配置全局默认邮箱（本航线留空时使用）"
+      : "尚未配置全局默认邮箱，请至少为本航线添加一个接收邮箱";
+  }
+  renderNotifyChips();
+  const input = document.getElementById("notifyEmailInput");
+  if (input) input.value = "";
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+  input?.focus();
+}
+
+async function saveNotifyGroupModal() {
+  const id = Number(state.notifyRouteId);
+  if (!id) return;
+  const emails = normalizeEmailList(state.notifyDraftEmails);
+  try {
+    const route = await api(`/api/routes/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ notify_emails: emails }),
+    });
+    const idx = (state.routes || []).findIndex((r) => Number(r.id) === id);
+    if (idx >= 0) state.routes[idx] = { ...state.routes[idx], ...route };
+    if (Number(state.currentRoute?.id) === id) {
+      state.currentRoute = { ...state.currentRoute, ...route };
+    }
+    closeNotifyGroupModal();
+    await loadRoutes();
+    toast(emails.length ? `已保存 ${emails.length} 个接收邮箱` : "已改用全局默认邮箱");
+  } catch (err) {
+    toast(err.message || String(err));
+  }
+}
+
+async function testNotifyGroupModal() {
+  const emails = normalizeEmailList(state.notifyDraftEmails);
+  const btn = document.getElementById("btnTestNotifyGroup");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api("/api/notify/test", {
+      method: "POST",
+      body: JSON.stringify({ emails }),
+    });
+    const recipients = Array.isArray(res?.recipients) ? res.recipients : [];
+    const who = recipients.length
+      ? recipients.join("、")
+      : res?.channel === "email"
+        ? "邮箱"
+        : "推送通道";
+    toast(`测试推送已发送至 ${who}`);
+  } catch (err) {
+    toast(err.message || String(err));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function bindNotifyGroupModal() {
+  const modal = document.getElementById("notifyGroupModal");
+  if (!modal) return;
+  modal.querySelectorAll("[data-close-notify-modal]").forEach((el) => {
+    el.addEventListener("click", closeNotifyGroupModal);
+  });
+  document.getElementById("btnSaveNotifyGroup")?.addEventListener("click", () => {
+    saveNotifyGroupModal().catch(() => {});
+  });
+  document.getElementById("btnTestNotifyGroup")?.addEventListener("click", () => {
+    testNotifyGroupModal().catch(() => {});
+  });
+  document.getElementById("notifyEmailForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = document.getElementById("notifyEmailInput");
+    const email = String(input?.value || "").trim().toLowerCase();
+    if (!email) return;
+    if (!email.includes("@") || !email.includes(".")) {
+      toast("请输入有效邮箱");
+      return;
+    }
+    state.notifyDraftEmails = normalizeEmailList([
+      ...state.notifyDraftEmails,
+      email,
+    ]);
+    if (input) input.value = "";
+    renderNotifyChips();
+    input?.focus();
   });
 }
 
@@ -2873,7 +3227,7 @@ function routeDataStamp(routes) {
   return (routes || [])
     .map(
       (r) =>
-        `${r.id}:${r.best_price ?? ""}:${r.observed_at ?? ""}:${r.enabled ? 1 : 0}:${r.alert_threshold ?? ""}`
+        `${r.id}:${r.best_price ?? ""}:${r.observed_at ?? ""}:${r.enabled ? 1 : 0}:${r.alert_threshold ?? ""}:${(r.notify_emails || []).join(",")}`
     )
     .join("|");
 }
@@ -2882,7 +3236,7 @@ function selectedRouteStamp(routes, selectedId) {
   if (selectedId == null) return "";
   const r = (routes || []).find((x) => Number(x.id) === Number(selectedId));
   if (!r) return "";
-  return `${r.id}:${r.best_price ?? ""}:${r.observed_at ?? ""}:${r.enabled ? 1 : 0}:${r.alert_threshold ?? ""}`;
+  return `${r.id}:${r.best_price ?? ""}:${r.observed_at ?? ""}:${r.enabled ? 1 : 0}:${r.alert_threshold ?? ""}:${(r.notify_emails || []).join(",")}`;
 }
 
 function isEditingDashboardUi() {
@@ -2963,6 +3317,7 @@ async function pollDashboard() {
   bindFlightBoardUi();
   bindRecommendUi();
   bindFlightTrendModal();
+  bindNotifyGroupModal();
   const [, , routes] = await Promise.all([
     loadCities().catch(() => {}),
     loadHealth(),

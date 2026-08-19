@@ -16,7 +16,7 @@ from app.config import get_config
 from app.scheduler import reschedule, scheduler_status, start_scheduler, stop_scheduler
 from app.services.demo_history import backfill_demo_history
 from app.services.monitor import get_scan_state, run_all_enabled, run_one_exclusive
-from app.services.notify import notify_status, send_drop_digest
+from app.services.notify import notify_status, resolve_route_recipients, send_drop_digest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +46,7 @@ class RoutePatch(BaseModel):
     filters: Optional[dict[str, Any]] = None
     depart_date: Optional[str] = None
     depart_date_end: Optional[str] = None
+    notify_emails: Optional[list[str]] = None
 
 
 class ResolveIn(BaseModel):
@@ -55,6 +56,11 @@ class ResolveIn(BaseModel):
 
 class ScheduleIn(BaseModel):
     interval_minutes: int
+
+
+class NotifyTestIn(BaseModel):
+    """可选：指定测试接收邮箱；留空列表则走全局默认。"""
+    emails: Optional[list[str]] = None
 
 
 @asynccontextmanager
@@ -139,40 +145,80 @@ def api_cities_resolve(body: ResolveIn) -> dict[str, str]:
 
 
 @app.get("/api/alerts")
-def api_alerts(limit: int = 20, route_id: Optional[int] = None) -> list[dict[str, Any]]:
-    return db.list_alerts(limit=limit, route_id=route_id)
+def api_alerts(
+    limit: int = 40,
+    route_id: Optional[int] = None,
+    latest_batch: bool = False,
+) -> list[dict[str, Any]]:
+    """默认返回仍有效的降价提醒（扫描时会按现价涨删/再降更新）。"""
+    return db.list_alerts(limit=limit, route_id=route_id, latest_batch=latest_batch)
 
 
 @app.post("/api/notify/test")
-def api_notify_test() -> dict[str, Any]:
+def api_notify_test(body: NotifyTestIn = NotifyTestIn()) -> dict[str, Any]:
     status = notify_status()
     if not status["enabled"]:
         raise HTTPException(
             400,
-            "未启用微信推送：请在 config.yaml 设置 notify.enabled=true 并填写 token 后重启",
+            "未启用推送：请在 config.yaml 设置 notify.enabled=true，"
+            "并填写 token（微信通道）或 SMTP（email 通道）后重启",
         )
+    route: dict[str, Any] = {
+        "origin": "XMN",
+        "origin_name": "厦门",
+        "destination": "URC",
+        "destination_name": "乌鲁木齐",
+        "depart_date": "2026-09-25",
+    }
+    if body.emails is not None:
+        route["notify_emails"] = body.emails
+    recipients = resolve_route_recipients(route)
+    if status["channel"] == "email" and not recipients:
+        raise HTTPException(400, "没有可用的接收邮箱，请添加邮箱或配置全局默认")
     ok = send_drop_digest(
         [
             {
-                "route": {
-                    "origin": "XMN",
-                    "origin_name": "厦门",
-                    "destination": "URC",
-                    "destination_name": "乌鲁木齐",
-                    "depart_date": "测试",
-                },
+                "route": route,
                 "platform": "fliggy",
-                "flight_no": "MU0000",
-                "airline": "MU",
-                "price": 999,
-                "prev_price": 1200,
-                "delta": -201,
+                "flight_no": "MF8281/CZ6950",
+                "airline": "厦航",
+                "price": 1450,
+                "prev_price": 1680,
+                "delta": -230,
+                "depart_time": "13:20",
+                "arrive_time": "23:20",
+                "duration_min": 600,
+                "layover_min": 125,
+                "stops": 1,
+                "seats_hint": "充足",
+                "depart_date": "2026-09-25",
+                "origin": "XMN",
+                "destination": "URC",
+                "meta": {
+                    "is_transfer": True,
+                    "transfer_city": "兰州",
+                    "layover_text": "2小时5分",
+                    "cabin": "经济舱",
+                    "baggage_text": "托运20kg",
+                    "baggage_kg": 20,
+                    "dep_airport": "XMN",
+                    "arr_airport": "URC",
+                    "leg_flights": ["MF8281", "CZ6950"],
+                    "leg_airlines": ["厦航", "南航"],
+                },
             }
         ]
     )
     if not ok:
-        raise HTTPException(502, "推送失败，请检查 token / 网络，并查看服务日志")
-    return {"ok": True, "channel": status["channel"]}
+        raise HTTPException(
+            502,
+            "推送失败，请检查 token / SMTP 配置 / 网络，并查看服务日志",
+        )
+    return {
+        "ok": True,
+        "channel": status["channel"],
+        "recipients": recipients,
+    }
 
 
 @app.get("/api/routes")
@@ -212,6 +258,8 @@ def api_patch_route(route_id: int, body: RoutePatch) -> dict[str, Any]:
             route = db.update_route_threshold(route_id, body.alert_threshold)
         if body.filters is not None:
             route = db.update_route_filters(route_id, body.filters)
+        if body.notify_emails is not None:
+            route = db.update_route_notify_emails(route_id, body.notify_emails)
         if body.depart_date is not None or body.depart_date_end is not None:
             start = body.depart_date or route["depart_date"]
             end = body.depart_date_end or body.depart_date or route.get("depart_date_end")

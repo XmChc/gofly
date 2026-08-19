@@ -53,13 +53,21 @@ class DatabaseConfig(BaseModel):
 
 
 class NotifyConfig(BaseModel):
-    """微信推送：推荐 WxPusher（永久免费、无需实名）。"""
+    """推送提醒，多渠道兼容。"""
 
     enabled: bool = False
-    # wxpusher | serverchan | pushplus
-    channel: str = "wxpusher"
-    # WxPusher 极简 SPT，或 Server酱 SendKey
+    # spt / wxpusher | serverchan | pushplus | email（token 前缀 SPT_/SCT 也可自动识别）
+    channel: str = "spt"
+    # SPT_xxx（WxPusher）或 SCT...（Server酱）等；email 通道可留空
     token: str = ""
+    # email 通道（建议 QQ 邮箱 + 微信「QQ邮箱提醒」）
+    smtp_host: str = "smtp.qq.com"
+    smtp_port: int = 465
+    smtp_ssl: bool | None = None  # None=按端口推断：465 SSL，587 STARTTLS
+    smtp_user: str = ""
+    smtp_pass: str = ""  # QQ 邮箱用授权码，非登录密码
+    mail_from: str = ""  # 空则用 smtp_user
+    mail_to: str = ""  # 空则用 smtp_user；微信提醒请填已绑定的 QQ 邮箱
 
 
 class SeedRoute(BaseModel):

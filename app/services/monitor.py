@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -32,23 +33,61 @@ def _set_scan_state(**kwargs: Any) -> None:
         _scan_state.update(kwargs)
 
 
-def _collect_drops(route: dict[str, Any], results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """对本轮各平台快照检测航班降价，并写入记录（仅默认筛选项内）。"""
+def _collect_drops(
+    route: dict[str, Any],
+    results: list[dict[str, Any]],
+    *,
+    batch_id: str,
+) -> list[dict[str, Any]]:
+    """对本轮各平台快照校正已有提醒并检测新降价（仅默认筛选项内）。
+
+    已有提醒：现价上涨或航班消失 → 删除；继续下降 → 更新为最新价。
+    """
     filters = route.get("filters")
     drops: list[dict[str, Any]] = []
+    db.purge_alerts_outside_watch_dates(int(route["id"]))
+    allow_dates = set(db.route_depart_dates(route))
     for r in results:
         sid = r.get("snapshot_id")
-        if not sid or r.get("min_price") is None:
+        if not sid:
             continue
+        if r.get("min_price") is None:
+            # 本轮取价失败时不盲目清提醒，避免误删
+            continue
+        updated = db.reconcile_alerts_for_snapshot(route["id"], int(sid))
+        seen: set[tuple[str, str, str]] = set()
+        for d in updated:
+            key = (
+                str(d.get("platform") or ""),
+                str(d.get("flight_no") or "").upper(),
+                str(d.get("depart_date") or ""),
+            )
+            seen.add(key)
+            drops.append({**d, "route": route, "batch_id": batch_id})
         for d in db.detect_flight_drops(route["id"], int(sid), filters=filters):
-            db.record_alert(
+            day = str(d.get("depart_date") or r.get("depart_date") or "").strip()
+            if allow_dates and day and day not in allow_dates:
+                continue
+            key = (
+                str(d.get("platform") or ""),
+                str(d.get("flight_no") or "").upper(),
+                day,
+            )
+            wrote = db.record_alert(
                 route["id"],
                 d["platform"],
                 float(d["price"]),
                 float(d["prev_price"]),
                 d.get("snapshot_id"),
+                flight_no=str(d.get("flight_no") or ""),
+                airline=str(d.get("airline") or ""),
+                depart_time=str(d.get("depart_time") or ""),
+                depart_date=day,
+                batch_id=batch_id,
             )
-            drops.append({**d, "route": route})
+            if wrote and key not in seen:
+                seen.add(key)
+                drops.append({**d, "route": route, "batch_id": batch_id, "depart_date": day})
     return drops
 
 
@@ -72,12 +111,14 @@ def run_route(
     *,
     demo_multi: bool | None = None,
     notify: bool = True,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     cfg = get_config()
     if demo_multi is None:
         demo_multi = list(cfg.platforms) == ["mock"]
     providers = build_providers(cfg.platforms, crawler_dict(), demo_multi=demo_multi)
     dates = db.route_depart_dates(route) or [route["depart_date"]]
+    scan_batch = (batch_id or "").strip() or uuid.uuid4().hex
 
     results: list[dict[str, Any]] = []
 
@@ -135,7 +176,7 @@ def run_route(
 
     priced = [r for r in results if r["min_price"] is not None]
     best = min(priced, key=lambda r: r["min_price"]) if priced else None
-    drops = _collect_drops(route, results)
+    drops = _collect_drops(route, results, batch_id=scan_batch)
     notify_drops = _drops_for_notify(drops)
     notified = False
     if notify and notify_drops:
@@ -144,6 +185,7 @@ def run_route(
     return {
         "route_id": route["id"],
         "depart_dates": dates,
+        "batch_id": scan_batch,
         "results": sorted(
             results,
             key=lambda r: (
@@ -213,6 +255,7 @@ def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
     all_drops: list[dict[str, Any]] = []
     ok = 0
     fail = 0
+    scan_batch = uuid.uuid4().hex
     try:
         for i, route in enumerate(routes, start=1):
             _set_scan_state(current_route_id=route["id"], progress=f"{i}/{len(routes)}")
@@ -223,7 +266,7 @@ def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
                 route["destination"],
                 db.route_date_label(route) or route["depart_date"],
             )
-            result = run_route(route, notify=False)
+            result = run_route(route, notify=False, batch_id=scan_batch)
             out.append(result)
             all_drops.extend(result.get("drops") or [])
             if result.get("best"):
@@ -251,6 +294,7 @@ def run_all_enabled(*, trigger: str = "manual") -> dict[str, Any]:
     return {
         "busy": False,
         "run_id": run_id,
+        "batch_id": scan_batch,
         "results": out,
         "drops": all_drops,
         "notified": notified,

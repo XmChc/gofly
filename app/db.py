@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS watch_routes (
     depart_date_end TEXT NOT NULL DEFAULT '',
     alert_threshold REAL NOT NULL DEFAULT 0,
     filter_json TEXT NOT NULL DEFAULT '',
+    notify_emails TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     UNIQUE(origin, destination, depart_date)
@@ -77,6 +79,11 @@ CREATE TABLE IF NOT EXISTS price_alerts (
     observed_at TEXT NOT NULL,
     snapshot_id INTEGER,
     acknowledged INTEGER NOT NULL DEFAULT 0,
+    flight_no TEXT NOT NULL DEFAULT '',
+    airline TEXT NOT NULL DEFAULT '',
+    depart_time TEXT NOT NULL DEFAULT '',
+    depart_date TEXT NOT NULL DEFAULT '',
+    batch_id TEXT NOT NULL DEFAULT '',
     FOREIGN KEY(route_id) REFERENCES watch_routes(id)
 );
 
@@ -165,11 +172,48 @@ def connect() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def parse_notify_emails(raw: Any) -> list[str]:
+    """解析接收邮箱列表：JSON 数组、逗号/换行分隔均可。"""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        items = [str(x).strip() for x in raw]
+    else:
+        text = str(raw).strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, list):
+                items = [str(x).strip() for x in data]
+            else:
+                items = re.split(r"[,;\s]+", text)
+        else:
+            items = re.split(r"[,;\s\n]+", text)
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        email = item.strip().lower()
+        if not email or "@" not in email or email in seen:
+            continue
+        seen.add(email)
+        out.append(email)
+    return out
+
+
+def notify_emails_to_json(emails: Any) -> str:
+    return json.dumps(parse_notify_emails(emails), ensure_ascii=False)
+
+
 def _row_to_route(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     from app.services.filters import normalize_filters
 
     d = dict(row)
     d["filters"] = normalize_filters(d.pop("filter_json", None) or "")
+    d["notify_emails"] = parse_notify_emails(d.pop("notify_emails", None) or "")
     start = str(d.get("depart_date") or "")
     end = str(d.get("depart_date_end") or "") or start
     d["depart_date_end"] = end
@@ -214,6 +258,10 @@ def init_db() -> None:
                 WHERE depart_date_end IS NULL OR depart_date_end = ''
                 """
             )
+        if "notify_emails" not in route_cols:
+            conn.execute(
+                "ALTER TABLE watch_routes ADD COLUMN notify_emails TEXT NOT NULL DEFAULT ''"
+            )
         snap_cols = {
             r["name"]
             for r in conn.execute("PRAGMA table_info(price_snapshots)").fetchall()
@@ -238,6 +286,73 @@ def init_db() -> None:
             ON price_snapshots(route_id, depart_date, platform, observed_at)
             """
         )
+        alert_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(price_alerts)").fetchall()
+        }
+        for col, decl in (
+            ("flight_no", "TEXT NOT NULL DEFAULT ''"),
+            ("airline", "TEXT NOT NULL DEFAULT ''"),
+            ("depart_time", "TEXT NOT NULL DEFAULT ''"),
+            ("depart_date", "TEXT NOT NULL DEFAULT ''"),
+            ("batch_id", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if col not in alert_cols:
+                conn.execute(f"ALTER TABLE price_alerts ADD COLUMN {col} {decl}")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_alerts_batch
+            ON price_alerts(batch_id, id)
+            """
+        )
+        # 旧提醒补航班信息（按 snapshot + 价格匹配）与 batch_id
+        legacy = conn.execute(
+            """
+            SELECT a.id, a.snapshot_id, a.price, a.observed_at, a.flight_no
+            FROM price_alerts a
+            WHERE IFNULL(a.batch_id, '') = ''
+               OR (IFNULL(a.flight_no, '') = '' AND a.snapshot_id IS NOT NULL)
+            """
+        ).fetchall()
+        for row in legacy:
+            observed = str(row["observed_at"] or "")
+            batch = f"legacy:{observed[:16]}" if len(observed) >= 16 else f"legacy:{row['id']}"
+            flight_no = str(row["flight_no"] or "").strip()
+            airline = ""
+            depart_time = ""
+            depart_date = ""
+            if not flight_no and row["snapshot_id"] is not None:
+                offer = conn.execute(
+                    """
+                    SELECT flight_no, airline, depart_time
+                    FROM flight_offers
+                    WHERE snapshot_id = ? AND ABS(price - ?) < 0.51
+                    ORDER BY price ASC LIMIT 1
+                    """,
+                    (row["snapshot_id"], row["price"]),
+                ).fetchone()
+                if offer:
+                    flight_no = str(offer["flight_no"] or "").strip().upper()
+                    airline = str(offer["airline"] or "").strip()
+                    depart_time = str(offer["depart_time"] or "").strip()
+            if row["snapshot_id"] is not None:
+                snap = conn.execute(
+                    "SELECT depart_date FROM price_snapshots WHERE id = ?",
+                    (row["snapshot_id"],),
+                ).fetchone()
+                depart_date = str(snap["depart_date"] if snap else "") or ""
+            conn.execute(
+                """
+                UPDATE price_alerts
+                SET flight_no = CASE WHEN IFNULL(flight_no, '') = '' THEN ? ELSE flight_no END,
+                    airline = CASE WHEN IFNULL(airline, '') = '' THEN ? ELSE airline END,
+                    depart_time = CASE WHEN IFNULL(depart_time, '') = '' THEN ? ELSE depart_time END,
+                    depart_date = CASE WHEN IFNULL(depart_date, '') = '' THEN ? ELSE depart_date END,
+                    batch_id = CASE WHEN IFNULL(batch_id, '') = '' THEN ? ELSE batch_id END
+                WHERE id = ?
+                """,
+                (flight_no, airline, depart_time, depart_date, batch, row["id"]),
+            )
 
 
 def seed_routes_if_empty(seeds: list[dict[str, Any]]) -> int:
@@ -443,6 +558,17 @@ def update_route_filters(route_id: int, filters: Any) -> Optional[dict[str, Any]
     return get_route(route_id)
 
 
+def update_route_notify_emails(route_id: int, emails: Any) -> Optional[dict[str, Any]]:
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE watch_routes SET notify_emails = ? WHERE id = ?",
+            (notify_emails_to_json(emails), route_id),
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_route(route_id)
+
+
 def update_route_dates(
     route_id: int,
     depart_date: str,
@@ -468,7 +594,34 @@ def update_route_dates(
         )
         if cur.rowcount == 0:
             return None
+    purge_alerts_outside_watch_dates(route_id)
     return get_route(route_id)
+
+
+def purge_alerts_outside_watch_dates(route_id: int | None = None) -> int:
+    """清除出发日已不在航线监听范围内的降价提醒（含空日期）。"""
+    removed = 0
+    with connect() as conn:
+        if route_id is not None:
+            routes = conn.execute(
+                "SELECT * FROM watch_routes WHERE id = ?", (route_id,)
+            ).fetchall()
+        else:
+            routes = conn.execute("SELECT * FROM watch_routes").fetchall()
+        for row in routes:
+            route = dict(row)
+            allow = set(route_depart_dates(route))
+            rid = int(route["id"])
+            alerts = conn.execute(
+                "SELECT id, depart_date FROM price_alerts WHERE route_id = ?",
+                (rid,),
+            ).fetchall()
+            for a in alerts:
+                day = str(a["depart_date"] or "").strip()
+                if not day or day not in allow:
+                    conn.execute("DELETE FROM price_alerts WHERE id = ?", (int(a["id"]),))
+                    removed += 1
+    return removed
 
 
 def save_platform_result(
@@ -627,18 +780,167 @@ def record_alert(
     price: float,
     threshold: float,
     snapshot_id: int | None,
+    *,
+    flight_no: str = "",
+    airline: str = "",
+    depart_time: str = "",
+    depart_date: str = "",
+    batch_id: str = "",
 ) -> bool:
-    """写入降价记录。threshold 字段存上期价格（便于列表展示）。"""
+    """写入/更新降价记录。同航线+平台+航班+出发日已存在则更新为最新价。
+
+    threshold 字段存对照原价（便于列表展示降幅）；更新时保留更早的原价。
+    """
+    fn = (flight_no or "").strip().upper()
+    day = (depart_date or "").strip()
+    plat = (platform or "").strip()
+    now = utc_now()
     with connect() as conn:
+        existing = conn.execute(
+            """
+            SELECT id, price, threshold FROM price_alerts
+            WHERE route_id = ? AND platform = ?
+              AND IFNULL(flight_no, '') = ?
+              AND IFNULL(depart_date, '') = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (route_id, plat, fn, day),
+        ).fetchone()
+        if existing:
+            # 保留最初对照价，仅在进一步降价时刷新现价
+            keep_threshold = float(existing["threshold"] or threshold)
+            if float(existing["price"]) <= float(price):
+                return False
+            conn.execute(
+                """
+                UPDATE price_alerts
+                SET price = ?, threshold = ?, observed_at = ?, snapshot_id = ?,
+                    airline = CASE WHEN ? != '' THEN ? ELSE airline END,
+                    depart_time = CASE WHEN ? != '' THEN ? ELSE depart_time END,
+                    batch_id = CASE WHEN ? != '' THEN ? ELSE batch_id END,
+                    acknowledged = 0
+                WHERE id = ?
+                """,
+                (
+                    float(price),
+                    keep_threshold,
+                    now,
+                    snapshot_id,
+                    (airline or "").strip(),
+                    (airline or "").strip(),
+                    (depart_time or "").strip(),
+                    (depart_time or "").strip(),
+                    (batch_id or "").strip(),
+                    (batch_id or "").strip(),
+                    int(existing["id"]),
+                ),
+            )
+            return True
         conn.execute(
             """
             INSERT INTO price_alerts
-            (route_id, platform, price, threshold, observed_at, snapshot_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (route_id, platform, price, threshold, observed_at, snapshot_id,
+             flight_no, airline, depart_time, depart_date, batch_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (route_id, platform, price, threshold, utc_now(), snapshot_id),
+            (
+                route_id,
+                plat,
+                price,
+                threshold,
+                now,
+                snapshot_id,
+                fn,
+                (airline or "").strip(),
+                (depart_time or "").strip(),
+                day,
+                (batch_id or "").strip(),
+            ),
         )
     return True
+
+
+def reconcile_alerts_for_snapshot(
+    route_id: int, snapshot_id: int
+) -> list[dict[str, Any]]:
+    """用本轮快照现价校正已有降价提醒。
+
+    - 航班消失或现价高于提醒价 → 删除
+    - 现价更低 → 更新为最新价（保留原对照价）
+    返回本轮因「再降」而更新的条目，供推送使用。
+    """
+    with connect() as conn:
+        snap = conn.execute(
+            "SELECT id, platform, depart_date FROM price_snapshots WHERE id = ? AND route_id = ?",
+            (snapshot_id, route_id),
+        ).fetchone()
+        if not snap:
+            return []
+        platform = str(snap["platform"] or "")
+        day = str(snap["depart_date"] or "")
+        alerts = conn.execute(
+            """
+            SELECT id, flight_no, airline, depart_time, price, threshold
+            FROM price_alerts
+            WHERE route_id = ? AND platform = ?
+              AND IFNULL(depart_date, '') = ?
+            """,
+            (route_id, platform, day),
+        ).fetchall()
+        if not alerts:
+            return []
+
+    curr_offers = offers_for_snapshot(snapshot_id)
+    by_fn: dict[str, dict[str, Any]] = {}
+    for o in curr_offers:
+        fn = str(o.get("flight_no") or "").strip().upper()
+        if not fn:
+            continue
+        price = float(o["price"])
+        prev = by_fn.get(fn)
+        if prev is None or price < float(prev["price"]):
+            by_fn[fn] = o
+
+    updated: list[dict[str, Any]] = []
+    now = utc_now()
+    with connect() as conn:
+        for a in alerts:
+            fn = str(a["flight_no"] or "").strip().upper()
+            alert_price = float(a["price"])
+            cur = by_fn.get(fn)
+            if cur is None or float(cur["price"]) > alert_price:
+                conn.execute("DELETE FROM price_alerts WHERE id = ?", (a["id"],))
+                continue
+            cur_price = float(cur["price"])
+            if cur_price >= alert_price:
+                continue
+            airline = str(cur.get("airline") or a["airline"] or "").strip()
+            depart_time = str(cur.get("depart_time") or a["depart_time"] or "").strip()
+            conn.execute(
+                """
+                UPDATE price_alerts
+                SET price = ?, observed_at = ?, snapshot_id = ?,
+                    airline = ?, depart_time = ?
+                WHERE id = ?
+                """,
+                (cur_price, now, snapshot_id, airline, depart_time, int(a["id"])),
+            )
+            prev_price = float(a["threshold"] or alert_price)
+            updated.append(
+                {
+                    "route_id": route_id,
+                    "platform": platform,
+                    "flight_no": fn,
+                    "airline": airline,
+                    "price": cur_price,
+                    "prev_price": prev_price,
+                    "delta": round(cur_price - prev_price, 1),
+                    "snapshot_id": snapshot_id,
+                    "depart_time": depart_time,
+                    "depart_date": day,
+                }
+            )
+    return updated
 
 
 def detect_flight_drops(
@@ -712,33 +1014,100 @@ def detect_flight_drops(
             "delta": round(cur - old, 1),
             "snapshot_id": snapshot_id,
             "depart_time": o.get("depart_time") or "",
+            "arrive_time": o.get("arrive_time") or "",
+            "duration_min": o.get("duration_min"),
+            "layover_min": o.get("layover_min"),
+            "stops": int(o.get("stops") or 0),
+            "seats_hint": o.get("seats_hint") or "",
+            "aircraft": o.get("aircraft") or "",
+            "meta": o.get("meta") or {},
+            "origin": o.get("origin") or "",
+            "destination": o.get("destination") or "",
+            "depart_date": snap["depart_date"] or o.get("depart_date") or "",
         }
         if fn not in best or cur < best[fn]["price"]:
             best[fn] = item
     return sorted(best.values(), key=lambda x: x["delta"])
 
 
-def list_alerts(limit: int = 20, route_id: int | None = None) -> list[dict[str, Any]]:
-    sql = """
+def _alert_row_to_dict(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    d = dict(row)
+    day = str(d.get("depart_date") or "").strip()
+    if day:
+        d["date_label"] = day
+    else:
+        d["date_label"] = route_date_label(
+            {
+                "depart_date": d.get("route_depart_date") or "",
+                "depart_date_end": d.get("depart_date_end") or "",
+            }
+        )
+    return d
+
+
+def list_alerts(
+    limit: int = 20,
+    route_id: int | None = None,
+    *,
+    latest_batch: bool = False,
+) -> list[dict[str, Any]]:
+    """列出降价提醒。latest_batch=True 时只返回最近一批（同一次扫描）。"""
+    # 先清掉已不在监听日期内的无效提醒
+    purge_alerts_outside_watch_dates(route_id)
+    base_select = """
         SELECT a.*, r.origin, r.destination, r.origin_name, r.destination_name,
-               r.depart_date, r.depart_date_end
+               r.depart_date AS route_depart_date, r.depart_date_end
         FROM price_alerts a
         JOIN watch_routes r ON r.id = a.route_id
     """
-    params: list[Any] = []
-    if route_id is not None:
-        sql += " WHERE a.route_id = ?"
-        params.append(route_id)
-    sql += " ORDER BY a.id DESC LIMIT ?"
-    params.append(limit)
     with connect() as conn:
+        if latest_batch:
+            where = ""
+            params: list[Any] = []
+            if route_id is not None:
+                where = " WHERE route_id = ?"
+                params.append(route_id)
+            latest = conn.execute(
+                f"""
+                SELECT batch_id, observed_at FROM price_alerts
+                {where}
+                ORDER BY id DESC LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            if not latest:
+                return []
+            batch_id = str(latest["batch_id"] or "").strip()
+            if batch_id:
+                sql = base_select + " WHERE a.batch_id = ?"
+                batch_params: list[Any] = [batch_id]
+                if route_id is not None:
+                    sql += " AND a.route_id = ?"
+                    batch_params.append(route_id)
+                sql += " ORDER BY a.price ASC, a.id DESC"
+                rows = conn.execute(sql, batch_params).fetchall()
+            else:
+                # 兼容旧数据：同一次扫描 observed_at 通常落在同一分钟
+                observed = str(latest["observed_at"] or "")
+                bucket = observed[:16] if len(observed) >= 16 else observed
+                sql = base_select + " WHERE substr(a.observed_at, 1, 16) = ?"
+                batch_params = [bucket]
+                if route_id is not None:
+                    sql += " AND a.route_id = ?"
+                    batch_params.append(route_id)
+                sql += " ORDER BY a.price ASC, a.id DESC"
+                rows = conn.execute(sql, batch_params).fetchall()
+            return [_alert_row_to_dict(r) for r in rows]
+
+        sql = base_select
+        params = []
+        if route_id is not None:
+            sql += " WHERE a.route_id = ?"
+            params.append(route_id)
+        sql += " ORDER BY a.id DESC LIMIT ?"
+        params.append(limit)
         rows = conn.execute(sql, params).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["date_label"] = route_date_label(d)
-        out.append(d)
-    return out
+    return [_alert_row_to_dict(r) for r in rows]
 
 
 def sparkline(route_id: int, points: int = 24) -> list[float]:

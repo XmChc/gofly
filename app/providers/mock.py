@@ -48,7 +48,8 @@ class MockProvider(BaseProvider):
         for i in range(6):
             code, name = AIRLINES[i % len(AIRLINES)]
             stops = 0 if i < 4 else 1
-            price = floor + i * rng.uniform(35, 90) + (stops * 40)
+            fare = round(floor + i * rng.uniform(35, 90) + (stops * 40), 0)
+            tax = 240 if stops else 120
             dep_h = 7 + i * 2
             dur = 120 + stops * 90 + rng.randint(0, 40)
             arr_h = dep_h + dur // 60
@@ -58,7 +59,7 @@ class MockProvider(BaseProvider):
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
-                    price=round(price, 0),
+                    price=fare + tax,
                     airline=name,
                     flight_no=f"{code}{1000 + rng.randint(1, 8999)}",
                     depart_time=f"{dep_h:02d}:{rng.randint(0, 5) * 10:02d}",
@@ -67,6 +68,7 @@ class MockProvider(BaseProvider):
                     stops=stops,
                     layover_min=75 if stops else None,
                     seats_hint=rng.choice(["充足", "紧张", "余票>9", "余票4"]),
+                    meta={"fare": fare, "tax": tax},
                 )
             )
         return offers
@@ -86,5 +88,8 @@ class BiasedMockProvider(MockProvider):
         bias = self.PLATFORM_BIAS.get(self.name, 0)
         for o in offers:
             o.platform = self.name
-            o.price = max(99, round(o.price + bias + random.uniform(-8, 8), 0))
+            tax = float((o.meta or {}).get("tax") or 0)
+            fare = max(50, round(o.price - tax + bias + random.uniform(-8, 8), 0))
+            o.meta = {**(o.meta or {}), "fare": fare, "tax": tax}
+            o.price = fare + tax
         return offers

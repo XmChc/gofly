@@ -673,12 +673,24 @@ async function patchRouteCard(routeId) {
 async function deleteRoutesByIds(ids, { confirmMsg } = {}) {
   const list = [...new Set((ids || []).map(Number).filter(Boolean))];
   if (!list.length) return;
-  const msg =
-    confirmMsg ||
-    (list.length === 1
-      ? "确定删除这条监控航线？"
-      : `确定删除所选 ${list.length} 条监控航线？`);
-  if (!confirm(msg)) return;
+  let msg = confirmMsg;
+  if (!msg) {
+    if (list.length === 1) {
+      const r = (state.routes || []).find((x) => Number(x.id) === list[0]);
+      const name = r
+        ? `${r.origin_name || r.origin} → ${r.destination_name || r.destination}`
+        : "这条监控航线";
+      msg = `确定删除「${name}」？删除后无法恢复。`;
+    } else {
+      msg = `确定删除所选 ${list.length} 条监控航线？删除后无法恢复。`;
+    }
+  }
+  const ok = await confirmAction({
+    title: "确认删除",
+    message: msg,
+    confirmText: "删除",
+  });
+  if (!ok) return;
 
   try {
     for (const id of list) {
@@ -769,7 +781,7 @@ async function loadRoutes() {
                 <span class="od">${r.origin_name || r.origin} → ${r.destination_name || r.destination}</span>
               </span>
               <span class="route-date" title="${dateTitle}">
-                <button type="button" class="date-capsule" data-act="edit-date" data-id="${r.id}" title="点击修改日期范围">${dateLabel}</button>
+                <span class="date-capsule" title="${dateTitle}">${dateLabel}</span>
               </span>
               <span class="route-actions">
                 <button type="button" class="act-pill" data-act="toggle" data-id="${r.id}" title="${toggleLabel}监控">${toggleLabel}</button>
@@ -781,24 +793,26 @@ async function loadRoutes() {
                   <span class="price">${money(r.best_price)}</span>
                   <span class="delta ${d.cls}">${d.html.replace("较上期 ", "")}</span>
                 </span>
-                <span class="route-foot-right">
-                  <span class="route-threshold">${thresholdText}</span>
-                  <button type="button" class="route-mail ${notifyCls}" data-act="notify" data-id="${r.id}" title="${notifyTitle}" aria-label="${notifyTitle}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <rect x="3" y="5" width="18" height="14" rx="2"></rect>
-                      <path d="M4 7l8 6 8-6"></path>
-                    </svg>
-                  </button>
-                </span>
               </span>
             </span>
-            <span class="route-badges">${statusMark}${pinMark}${hit}${pausedMark}</span>
+            <span class="route-aside">
+              <span class="route-badges">${statusMark}${pinMark}${hit}${pausedMark}</span>
+              <span class="route-foot-right">
+                <span class="route-threshold">${thresholdText}</span>
+                <button type="button" class="route-mail ${notifyCls}" data-act="notify" data-id="${r.id}" title="${notifyTitle}" aria-label="${notifyTitle}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                    <path d="M4 7l8 6 8-6"></path>
+                  </svg>
+                </button>
+              </span>
+            </span>
           </span>
         </div>`;
     })
     .join("");
 
-  const isQuickTarget = (t) => t.closest(".route-check, .act-pill, .date-capsule, .route-mail");
+  const isQuickTarget = (t) => t.closest(".route-check, .act-pill, .route-mail");
 
   box.querySelectorAll(".route").forEach((el) => {
     const open = () => openDetail(Number(el.dataset.id));
@@ -823,7 +837,7 @@ async function loadRoutes() {
     });
   });
 
-  box.querySelectorAll(".act-pill, .date-capsule[data-act], .route-mail").forEach((btn) => {
+  box.querySelectorAll(".act-pill, .route-mail").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1400,7 +1414,7 @@ function paintOfferFilters(total, filteredN) {
     { v: "0", label: "仅中转" },
   ];
   const sortOpts = [
-    { v: "price", label: "价格" },
+    { v: "price", label: "总价" },
     { v: "duration", label: "时长" },
     { v: "depart", label: "出发早" },
     { v: "depart_desc", label: "出发晚" },
@@ -1531,11 +1545,12 @@ function paintCompareTable() {
     byPlat.get(key).push(o);
   }
   const rows = platforms.map((p) => {
-    if (!cache.length) return p;
+    if (!cache.length) return { ...p, cheapest: null };
     const list = byPlat.get(p.platform) || [];
     const cheapest = cheapestOffer(list);
     return {
       ...p,
+      cheapest,
       min_price: cheapest ? Number(cheapest.price) : null,
       offer_count: list.length,
       delta_vs_prev: cheapest ? cheapest.price_delta : null,
@@ -1551,6 +1566,7 @@ function paintCompareTable() {
           <div class="card ${isBest ? "best" : ""}">
             <div class="name">${PLATFORM_LABEL[p.platform] || p.platform}${isBest ? " · 最低" : ""}</div>
             <div class="val">${money(p.min_price)}</div>
+            ${p.cheapest ? fareSubline(p.cheapest) : ""}
             <div class="meta"><span class="delta ${d.cls}">${d.html}</span></div>
             ${
               p.error
@@ -1723,10 +1739,10 @@ function bindFlightBoardUi(root) {
 function renderFlightSection(title, count, list, route, isTransfer) {
   const head = isTransfer
     ? `<div class="fb-head xfer">
-        <div>航班组合</div><div>价格</div><div>行程</div><div>信息</div><div></div>
+        <div>航班组合</div><div>总价</div><div>行程</div><div>信息</div><div></div>
       </div>`
     : `<div class="fb-head">
-        <div>航空公司 / 航班</div><div>价格</div><div>起降时间</div><div>信息</div><div></div>
+        <div>航空公司 / 航班</div><div>总价</div><div>起降时间</div><div>信息</div><div></div>
       </div>`;
   return `
     <section class="fb-section" data-kind="${isTransfer ? "xfer" : "direct"}">
@@ -1838,8 +1854,14 @@ function airlineLogoHtml(name, iconUrl) {
 function fliggySearchUrl(route, departDate) {
   const dep = encodeURIComponent(route.origin || "");
   const arr = encodeURIComponent(route.destination || "");
-  const date = encodeURIComponent(departDate || route.depart_date || "");
-  return `https://sjipiao.fliggy.com/flight_search_result.htm?tripType=0&depCity=${dep}&arrCity=${arr}&depDate=${date}&searchBy=1280`;
+  const start = String(route?.depart_date || "").trim();
+  const end = String(route?.depart_date_end || start).trim() || start;
+  const raw = String(departDate || "").trim();
+  const inRange = Boolean(raw && start && raw >= start && raw <= end);
+  const picked = (inRange && raw) || start || raw || "";
+  const date = encodeURIComponent(picked);
+  // H5 与监控取价同源；PC 列表常是另一档舱，对不上 lowest
+  return `https://h5.m.taobao.com/trip/flight/search/index.html?depCityCode=${dep}&arrCityCode=${arr}&leaveDate=${date}&searchType=1&tripType=0`;
 }
 
 function priceDeltaBadge(o) {
@@ -1849,6 +1871,39 @@ function priceDeltaBadge(o) {
   if (n === 0) return `<span class="price-delta flat">→0</span>`;
   const up = Number(d) > 0;
   return `<span class="price-delta ${up ? "up" : "down"}">${up ? "↑" : "↓"}${n}</span>`;
+}
+
+function offerFare(o) {
+  if (!o) return null;
+  const m = normalizeMeta(o.meta);
+  const fare = m.fare != null ? Number(m.fare) : null;
+  if (fare == null || !Number.isFinite(fare) || fare <= 0) return null;
+  return fare;
+}
+
+function fareSubline(o) {
+  const m = normalizeMeta(o.meta);
+  const total = Number(o.price);
+  let fare = offerFare(o);
+  let tax = m.tax != null ? Number(m.tax) : null;
+  if (tax != null && !Number.isFinite(tax)) tax = null;
+  if (fare == null && tax != null && tax > 0 && Number.isFinite(total)) {
+    fare = total - tax;
+  }
+  if (tax == null && fare != null && Number.isFinite(total) && total > fare + 0.5) {
+    tax = total - fare;
+  }
+  if (fare == null && !(tax > 0)) return "";
+  const fareBit = fare != null ? `<span>机票 ¥${Math.round(fare)}</span>` : "";
+  const taxBit = tax > 0 ? `<span class="price-tax">机建燃油 ¥${Math.round(tax)}</span>` : "";
+  return `<div class="price-fare">${fareBit}${taxBit}</div>`;
+}
+
+function priceBlockHtml(o) {
+  return `<div class="price-block">
+    <div class="price-main"><span class="yen">¥</span>${Math.round(o.price)}${priceDeltaBadge(o)}</div>
+    ${fareSubline(o)}
+  </div>`;
 }
 
 function escapeAttr(s) {
@@ -1991,7 +2046,7 @@ function renderDirectRow(o, route) {
           <div class="airline-no">${fn || "—"}</div>
         </div>
       </div>
-      <div class="price-main"><span class="yen">¥</span>${Math.round(o.price)}${priceDeltaBadge(o)}</div>
+      ${priceBlockHtml(o)}
       <div class="flight-times">
         <div class="time-block">
           <div class="time-big">${dep}</div>
@@ -2076,7 +2131,7 @@ function renderTransferRow(o, route) {
         <div class="xfer-combo-legs">${combo}</div>
         ${datePill}
       </div>
-      <div class="price-main"><span class="yen">¥</span>${Math.round(o.price)}${priceDeltaBadge(o)}</div>
+      ${priceBlockHtml(o)}
       <div class="xfer-journey">
         <div class="xfer-times">
           <div class="time-block">
@@ -2179,11 +2234,17 @@ function flightTrendModalTitle(flightNo) {
   return parts.join(" · ") || "航班价格走势";
 }
 
+function anyModalOpen() {
+  return ["flightTrendModal", "notifyGroupModal", "confirmModal"].some(
+    (id) => document.getElementById(id)?.hidden === false
+  );
+}
+
 function closeFlightTrendModal() {
   const modal = document.getElementById("flightTrendModal");
   if (!modal || modal.hidden) return;
   modal.hidden = true;
-  document.body.classList.remove("modal-open");
+  if (!anyModalOpen()) document.body.classList.remove("modal-open");
 }
 
 function openFlightTrendModal(flightNo) {
@@ -2370,8 +2431,7 @@ function closeNotifyGroupModal() {
   const modal = document.getElementById("notifyGroupModal");
   if (!modal || modal.hidden) return;
   modal.hidden = true;
-  const trendOpen = document.getElementById("flightTrendModal")?.hidden === false;
-  if (!trendOpen) document.body.classList.remove("modal-open");
+  if (!anyModalOpen()) document.body.classList.remove("modal-open");
   state.notifyRouteId = null;
   state.notifyDraftEmails = [];
 }
@@ -2488,6 +2548,57 @@ function bindNotifyGroupModal() {
     if (input) input.value = "";
     renderNotifyChips();
     input?.focus();
+  });
+}
+
+let confirmResolver = null;
+
+function closeConfirmModal(result = false) {
+  const modal = document.getElementById("confirmModal");
+  const resolve = confirmResolver;
+  confirmResolver = null;
+  if (modal && !modal.hidden) {
+    modal.hidden = true;
+    if (!anyModalOpen()) document.body.classList.remove("modal-open");
+  }
+  if (resolve) resolve(!!result);
+}
+
+function confirmAction({ title = "请确认", message = "", confirmText = "确定" } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("confirmModal");
+    if (!modal) {
+      resolve(window.confirm(message || title));
+      return;
+    }
+    if (confirmResolver) confirmResolver(false);
+    confirmResolver = resolve;
+    const titleEl = document.getElementById("confirmModalTitle");
+    const msgEl = document.getElementById("confirmModalMsg");
+    const okBtn = document.getElementById("btnConfirmOk");
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message;
+    if (okBtn) okBtn.textContent = confirmText || "确定";
+    modal.hidden = false;
+    document.body.classList.add("modal-open");
+    document.getElementById("btnConfirmCancel")?.focus();
+  });
+}
+
+function bindConfirmModal() {
+  const modal = document.getElementById("confirmModal");
+  if (!modal) return;
+  modal.querySelectorAll("[data-close-confirm-modal]").forEach((el) => {
+    el.addEventListener("click", () => closeConfirmModal(false));
+  });
+  document.getElementById("btnConfirmOk")?.addEventListener("click", () => {
+    closeConfirmModal(true);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (modal.hidden) return;
+    e.preventDefault();
+    closeConfirmModal(false);
   });
 }
 
@@ -3011,7 +3122,7 @@ function initDatePicker() {
     if (path.includes(pop) || path.includes(root) || pop.contains(e.target) || root.contains(e.target)) {
       return;
     }
-    if (e.target.closest?.(".date-capsule[data-act='edit-date'], #detailDateBtn, #depart_date_display")) {
+    if (e.target.closest?.("#detailDateBtn, #depart_date_display")) {
       return;
     }
     closePop();
@@ -3353,6 +3464,7 @@ async function pollDashboard() {
   bindRecommendUi();
   bindFlightTrendModal();
   bindNotifyGroupModal();
+  bindConfirmModal();
   const [, , routes] = await Promise.all([
     loadCities().catch(() => {}),
     loadHealth(),

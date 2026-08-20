@@ -444,7 +444,7 @@ main,
 .workspace,
 #monitorPanel {
   display: grid;
-  grid-template-columns: minmax(250px, 290px) minmax(0, 1fr);
+  grid-template-columns: minmax(270px, 320px) minmax(0, 1fr);
   gap: 0.9rem;
   align-items: start;
   background: transparent;
@@ -559,8 +559,7 @@ main,
 }
 .route-top,
 .route-date,
-.route-actions,
-.route-mid {
+.route-actions {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -571,16 +570,29 @@ main,
   align-items: flex-start;
 }
 .route-mid {
-  justify-content: space-between;
+  display: flex;
   align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
   padding-top: 0.15rem;
   border-top: 1px dashed #eef2f6;
 }
 .route-price-group {
   display: inline-flex;
   align-items: baseline;
-  gap: 0.4rem;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.4rem;
   min-width: 0;
+}
+.route-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  align-self: stretch;
 }
 .route .od {
   font-weight: 700;
@@ -599,9 +611,12 @@ main,
   justify-content: flex-start;
 }
 .route-actions {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-start;
   gap: 0.28rem;
+}
+.route-actions .act-pill {
+  flex: 0 0 auto;
 }
 .route-date .date-capsule {
   display: inline-flex;
@@ -619,12 +634,8 @@ main,
   line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
-}
-.route-date .date-capsule:hover {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-  background: var(--accent-soft);
+  cursor: default;
+  pointer-events: none;
 }
 .route.active .route-date .date-capsule {
   border-color: #bfdbfe;
@@ -704,6 +715,7 @@ main,
 .route .delta {
   font-size: 0.74rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 .route .delta.down,
 .delta.down { color: var(--down); }
@@ -724,9 +736,10 @@ main,
 .route-foot-right {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.28rem;
-  margin-left: auto;
-  flex-shrink: 0;
+  margin-top: auto;
+  flex: 0 0 auto;
 }
 .route-threshold {
   color: var(--muted);
@@ -1132,6 +1145,9 @@ main,
   line-height: 1.35;
   word-break: break-word;
 }
+.compare .price-fare {
+  margin-top: 0.12rem;
+}
 
 /* —— Recommend —— */
 .rec-board {
@@ -1280,6 +1296,13 @@ main,
   gap: 0.5rem;
   min-width: 0;
 }
+.fb-row > .price-block {
+  justify-self: start;
+  display: grid;
+  gap: 0.12rem;
+  align-content: center;
+}
+.fb-row > .price-block .price-main,
 .fb-row > .price-main {
   justify-self: start;
   white-space: nowrap;
@@ -1287,6 +1310,19 @@ main,
   font-size: 1.2rem;
   font-weight: 750;
   letter-spacing: -0.02em;
+}
+.price-fare {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
+  display: grid;
+  gap: 0.02rem;
+  white-space: nowrap;
+}
+.price-fare .price-tax {
+  color: #94a3b8;
 }
 .price-main .yen {
   font-size: 0.78rem;
@@ -1757,6 +1793,31 @@ body.modal-open { overflow: hidden; }
   display: flex;
   gap: 0.5rem;
   margin-left: auto;
+}
+
+.confirm-dialog {
+  width: min(400px, 100%);
+  padding: 1rem 1.1rem 1.1rem;
+}
+.confirm-msg {
+  margin: 0.15rem 0 1.05rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.confirm-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+#confirmModal .btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+#confirmModal .btn.danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 /* —— Chinese date picker —— */

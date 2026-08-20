@@ -197,8 +197,8 @@ def api_notify_test(body: NotifyTestIn = NotifyTestIn()) -> dict[str, Any]:
                 "platform": "fliggy",
                 "flight_no": "MF8281/CZ6950",
                 "airline": "厦航",
-                "price": 1450,
-                "prev_price": 1680,
+                "price": 1570,
+                "prev_price": 1800,
                 "delta": -230,
                 "depart_time": "13:20",
                 "arrive_time": "23:20",
@@ -220,6 +220,8 @@ def api_notify_test(body: NotifyTestIn = NotifyTestIn()) -> dict[str, Any]:
                     "arr_airport": "URC",
                     "leg_flights": ["MF8281", "CZ6950"],
                     "leg_airlines": ["厦航", "南航"],
+                    "fare": 1330,
+                    "tax": 240,
                 },
             }
         ]

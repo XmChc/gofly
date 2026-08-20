@@ -234,6 +234,20 @@ def _normalize_flight(d: dict[str, Any]) -> dict[str, Any]:
     price = float(d.get("price") or 0)
     prev = d.get("prev_price")
     delta = abs(float(d.get("delta") or 0))
+    fare = meta.get("fare")
+    tax = meta.get("tax")
+    try:
+        fare = float(fare) if fare is not None else None
+    except (TypeError, ValueError):
+        fare = None
+    try:
+        tax = float(tax) if tax is not None else None
+    except (TypeError, ValueError):
+        tax = None
+    if fare is None and tax is not None and price:
+        fare = round(price - tax, 2)
+    if tax is None and fare is not None and price > fare + 0.5:
+        tax = round(price - fare, 2)
     return {
         "title": title,
         "legs": legs,
@@ -255,6 +269,8 @@ def _normalize_flight(d: dict[str, Any]) -> dict[str, Any]:
         "price": price,
         "prev_price": float(prev) if prev is not None else None,
         "delta": delta,
+        "fare": fare,
+        "tax": tax,
         "depart_date": str(
             d.get("depart_date")
             or route.get("date_label")
@@ -323,6 +339,9 @@ def _format_text(groups: list[dict[str, Any]]) -> str:
         lines.append(head)
         for f in g["flights"]:
             lines.append(f"  {f['title']}  ¥{f['price']:.0f}（↓{f['delta']:.0f}）")
+            fare_line = _fare_caption(f)
+            if fare_line:
+                lines.append(f"    {fare_line}")
             mid = (
                 f"{f['transfer_city']} 停 {f['layover']}"
                 if f["is_transfer"]
@@ -335,6 +354,28 @@ def _format_text(groups: list[dict[str, Any]]) -> str:
             lines.append(f"    {' · '.join(bits)}")
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def _fare_caption(f: dict[str, Any]) -> str:
+    fare = f.get("fare")
+    tax = f.get("tax")
+    price = float(f.get("price") or 0)
+    try:
+        fare_n = float(fare) if fare is not None else None
+    except (TypeError, ValueError):
+        fare_n = None
+    if fare_n is None or abs(fare_n - price) < 0.5:
+        return ""
+    try:
+        tax_n = float(tax) if tax is not None else None
+    except (TypeError, ValueError):
+        tax_n = None
+    if tax_n is None and price > fare_n:
+        tax_n = price - fare_n
+    bits = [f"机票 ¥{fare_n:.0f}"]
+    if tax_n and tax_n > 0:
+        bits.append(f"机建燃油 ¥{tax_n:.0f}")
+    return " · ".join(bits)
 
 
 def _pill(text: str, *, bg: str, fg: str) -> str:
@@ -410,6 +451,12 @@ def _render_flight_card(f: dict[str, Any]) -> str:
             f'style="color:#2563eb;font-size:13px;font-weight:600;text-decoration:none;">'
             f'飞猪查余票 →</a></div>'
         )
+    fare_cap = _fare_caption(f)
+    fare_html = (
+        f'<div style="margin-top:4px;font-size:12px;color:#64748b;">{html.escape(fare_cap)}</div>'
+        if fare_cap
+        else ""
+    )
 
     return f"""
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
@@ -426,6 +473,7 @@ def _render_flight_card(f: dict[str, Any]) -> str:
                 <span style="font-size:22px;font-weight:800;color:#ef4444;letter-spacing:-0.02em;">
                   ¥{f['price']:.0f}
                 </span>
+                {fare_html}
                 <div style="margin-top:4px;">
                   {_pill(f"↓{f['delta']:.0f}", bg="#dcfce7", fg="#15803d")}
                 </div>

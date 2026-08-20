@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=37" />
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css?v=42" />
+  <script src="/static/vendor/echarts.min.js?v=5.5.1"></script>
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -221,6 +221,21 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=38"></script>
+  <div id="confirmModal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-confirm-modal></div>
+    <div class="modal-dialog confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <div class="modal-head">
+        <h3 id="confirmModalTitle">确认删除</h3>
+        <button type="button" class="modal-close" data-close-confirm-modal aria-label="关闭">×</button>
+      </div>
+      <p id="confirmModalMsg" class="confirm-msg"></p>
+      <div class="confirm-modal-foot">
+        <button type="button" class="btn" id="btnConfirmCancel" data-close-confirm-modal>取消</button>
+        <button type="button" class="btn danger" id="btnConfirmOk">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=42"></script>
 </body>
 </html>

@@ -214,11 +214,8 @@ class FliggyProvider(BaseProvider):
         destination: str,
         depart_date: str,
     ) -> FlightOffer | None:
-        try:
-            price = float(ds.get("bestPrice"))
-        except (TypeError, ValueError):
-            return None
-        if price <= 0:
+        fare, tax, total = _adult_prices(ds)
+        if total is None or total <= 0:
             return None
 
         ti = ds.get("transferInfo") if isinstance(ds.get("transferInfo"), dict) else {}
@@ -347,6 +344,8 @@ class FliggyProvider(BaseProvider):
             "price_tag": "联程优惠价" if is_transfer else "",
             "cabin": str(ds.get("bestCabinClassName") or ""),
             "transfer_aircraft": str(ti.get("transferFlightSize") or ""),
+            "fare": fare,
+            "tax": tax,
         }
         meta.update(
             baggage_meta_for_item(
@@ -365,7 +364,7 @@ class FliggyProvider(BaseProvider):
             origin=origin,
             destination=destination,
             depart_date=depart_date,
-            price=price,
+            price=total,
             airline=airline_display,
             flight_no=flight_no,
             depart_time=normalize_hhmm(dep_raw) or str(ds.get("depTimeShow") or ""),
@@ -377,6 +376,46 @@ class FliggyProvider(BaseProvider):
             aircraft=craft,
             meta=meta,
         )
+
+
+def _as_yuan(val: Any, hint: float | None = None) -> float | None:
+    """Normalize Fliggy money: list fields are yuan, priceInfo is usually fen."""
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return None
+    if n < 0:
+        return None
+    if n == 0:
+        return 0.0
+    if hint is not None and hint > 0:
+        if abs(n - hint) < 0.51:
+            return round(n, 2)
+        if abs(n / 100.0 - hint) < 0.51:
+            return round(n / 100.0, 2)
+    if n >= 1000:
+        return round(n / 100.0, 2)
+    return round(n, 2)
+
+
+def _adult_prices(ds: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
+    """Return (fare, tax, total) in yuan. tax is 机建+燃油, not fuel alone."""
+    try:
+        list_fare = float(ds.get("bestPrice"))
+    except (TypeError, ValueError):
+        list_fare = 0.0
+    if list_fare <= 0:
+        return None, None, None
+    pi = ds.get("priceInfo") if isinstance(ds.get("priceInfo"), dict) else {}
+    fare = _as_yuan(pi.get("adultPrice"), list_fare) or list_fare
+    tax = _as_yuan(pi.get("adultTax"))
+    tax_hint = fare + tax if tax is not None else fare
+    total = _as_yuan(pi.get("adultTotalPrice"), tax_hint)
+    if total is None:
+        total = round(fare + tax, 2) if tax is not None else fare
+    elif tax is None and total > fare + 0.5:
+        tax = round(total - fare, 2)
+    return fare, tax, total
 
 
 def _seats_from_left(left: Any) -> str:

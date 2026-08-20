@@ -965,7 +965,8 @@ async function openDetail(id, opts = {}) {
   const dateBtn = document.getElementById("detailDateBtn");
   if (odEl) odEl.textContent = `${r.origin}–${r.destination}`;
   if (dateBtn) {
-    dateBtn.textContent = formatRouteDateMeta(r);
+    dateBtn.textContent = formatRouteDateCapsuleRange(r);
+    dateBtn.title = formatRouteDateMeta(r);
     dateBtn.hidden = false;
     dateBtn.dataset.routeId = String(r.id);
   } else {
@@ -1466,18 +1467,36 @@ function paintOfferFilters(total, filteredN) {
 function offerFilterSummary(f, sortCur, durOpts, dayOpts, bagOpts, directOpts, sortOpts) {
   const tags = [];
   const pick = (opts, v) => opts.find((o) => o.v === v)?.label;
-  if (f.maxDuration != null) {
-    const label = pick(durOpts, String(f.maxDuration));
-    if (label) tags.push(label);
-  }
-  if (f.sameDay === true) tags.push(pick(dayOpts, "1") || "当天到达");
-  else if (f.sameDay === false) tags.push(pick(dayOpts, "0") || "跨天到达");
-  if (f.directOnly === true) tags.push(pick(directOpts, "1") || "仅直飞");
-  else if (f.directOnly === false) tags.push(pick(directOpts, "0") || "仅中转");
-  if (f.bag20) tags.push(pick(bagOpts, "1") || "含20kg托运");
+  const short = {
+    "≤6小时": "≤6h",
+    "≤8小时": "≤8h",
+    "≤10小时": "≤10h",
+    "≤12小时": "≤12h",
+    "≤24小时": "≤24h",
+    当天到达: "当天",
+    跨天到达: "跨天",
+    仅直飞: "直飞",
+    仅中转: "中转",
+    含20kg托运: "20kg",
+    总价: "总价",
+    时长: "时长",
+    出发早: "早飞",
+    出发晚: "晚飞",
+    降幅: "降幅",
+  };
+  const add = (label) => {
+    if (!label) return;
+    tags.push(short[label] || label);
+  };
+  if (f.maxDuration != null) add(pick(durOpts, String(f.maxDuration)));
+  if (f.sameDay === true) add(pick(dayOpts, "1") || "当天到达");
+  else if (f.sameDay === false) add(pick(dayOpts, "0") || "跨天到达");
+  if (f.directOnly === true) add(pick(directOpts, "1") || "仅直飞");
+  else if (f.directOnly === false) add(pick(directOpts, "0") || "仅中转");
+  if (f.bag20) add(pick(bagOpts, "1") || "含20kg托运");
   if (sortCur && sortCur !== "price") {
     const label = pick(sortOpts, sortCur);
-    if (label) tags.push(`按${label}`);
+    if (label) add(label);
   }
   return tags;
 }
@@ -1495,22 +1514,6 @@ function renderOfferFilters(durOpts, dayOpts, bagOpts, directOpts, sortOpts, f, 
     ? summary.map((t) => `<span class="fb-filter-tag">${t}</span>`).join("")
     : `<span class="fb-filter-tag muted">未设筛选</span>`;
   return `
-      <div class="fb-filters-bar">
-        <button type="button" class="fb-filters-toggle" data-filter-act="toggle" aria-expanded="${expanded ? "true" : "false"}">
-          <span class="fb-filters-toggle-main">
-            <span class="fb-filters-toggle-title">筛选</span>
-            <span class="fb-filters-count">显示 ${filteredN}/${total}</span>
-          </span>
-          <span class="fb-filters-summary">${summaryHtml}</span>
-          <span class="fb-filters-chevron" aria-hidden="true"></span>
-        </button>
-        <div class="fb-filter-meta">
-          <span class="fb-filter-count-desk">显示 ${filteredN} / ${total}</span>
-          <span class="fb-filter-hint">${dirty ? "未保存 · 仅预览" : "推送按已保存筛选"}</span>
-          ${dirty ? `<button type="button" class="btn ghost fb-filter-reset" data-filter-act="reset">还原</button>` : ""}
-          <button type="button" class="btn primary fb-filter-save" data-filter-act="save" ${dirty ? "" : "disabled"}>保存默认</button>
-        </div>
-      </div>
       <div class="fb-filters-body">
       <div class="fb-filter-group">
         <span class="fb-filter-label">总时长</span>
@@ -1571,6 +1574,19 @@ function renderOfferFilters(durOpts, dayOpts, bagOpts, directOpts, sortOpts, f, 
             .join("")}
         </div>
       </div>
+      </div>
+      <div class="fb-filters-bar">
+        <button type="button" class="fb-filters-toggle" data-filter-act="toggle" aria-expanded="${expanded ? "true" : "false"}">
+          <span class="fb-filters-count">${filteredN}/${total}</span>
+          <span class="fb-filters-summary">${summaryHtml}</span>
+          <span class="fb-filters-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="fb-filter-meta">
+          <span class="fb-filter-count-desk">显示 ${filteredN} / ${total}</span>
+          <span class="fb-filter-hint">${dirty ? "未保存 · 仅预览" : "推送按已保存筛选"}</span>
+          ${dirty ? `<button type="button" class="btn ghost fb-filter-reset" data-filter-act="reset">还原</button>` : ""}
+          <button type="button" class="btn primary fb-filter-save" data-filter-act="save" ${dirty ? "" : "disabled"}>保存默认</button>
+        </div>
       </div>`;
 }
 
@@ -3294,7 +3310,7 @@ document.getElementById("addForm").addEventListener("submit", async (e) => {
   }
 });
 
-document.getElementById("btnPin").addEventListener("click", async () => {
+document.getElementById("btnPin")?.addEventListener("click", async () => {
   if (!state.selectedId) return;
   const next = !isRoutePinned(state.selectedId);
   setRoutePinned(state.selectedId, next);
@@ -3312,7 +3328,7 @@ document.getElementById("alertThreshold")?.addEventListener("keydown", (e) => {
   }
 });
 
-document.getElementById("btnClose").addEventListener("click", () => {
+document.getElementById("btnClose")?.addEventListener("click", () => {
   document.getElementById("detail").hidden = true;
   state.selectedId = null;
   state.currentRoute = null;

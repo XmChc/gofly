@@ -223,9 +223,11 @@ def run_route(
 def run_one_exclusive(route: dict[str, Any], *, trigger: str = "manual_one") -> dict[str, Any]:
     """扫描单条航线并占用扫描锁，避免与「扫描全部」/定时任务交叉改价。"""
     rid = int(route["id"])
+    run_id: int | None = None
     with _state_lock:
         if _scan_state["scanning"]:
             return {"busy": True, "route_id": rid, "results": [], "drops": []}
+        run_id = db.begin_scan_run(trigger, 1)
         _scan_state.update(
             {
                 "scanning": True,
@@ -243,7 +245,16 @@ def run_one_exclusive(route: dict[str, Any], *, trigger: str = "manual_one") -> 
             route["destination"],
             db.route_date_label(route) or route["depart_date"],
         )
-        return run_route(route)
+        result = run_route(route)
+        ok = 1 if result.get("best") else 0
+        fail = 0 if ok else 1
+        if run_id is not None:
+            db.finish_scan_run(run_id, ok, fail)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        if run_id is not None:
+            db.finish_scan_run(run_id, 0, 1, note=str(exc))
+        raise
     finally:
         _set_scan_state(
             scanning=False,

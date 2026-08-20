@@ -1,0 +1,27 @@
+# 绿联 / Docker Hub 用法：
+# 1. 复制本文件旁的 config.example.yaml 为 config.yaml，按需改 notify / seed_routes
+# 2. 把下方 image 改成你的 Docker Hub 仓库名
+# 3. docker compose up -d
+#
+# 本机构建并推送：
+#   docker build -t xmchc/gofly:latest .
+#   docker push xmchc/gofly:latest
+
+services:
+  gofly:
+    image: xmchc/gofly:latest
+    # 本地调试可取消下一行注释，改为本地 build：
+    # build: .
+    container_name: gofly
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      GOFLY_CONFIG: /app/config.yaml
+      GOFLY_HOST: "0.0.0.0"
+      GOFLY_PORT: "8787"
+      TZ: Asia/Shanghai

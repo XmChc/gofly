@@ -18,6 +18,7 @@ TZ = ZoneInfo("Asia/Shanghai")
 
 FULL_JOB_ID = "gofly_scan"
 PROBE_JOB_ID = "gofly_probe"
+WATCHDOG_JOB_ID = "gofly_watchdog"
 
 
 def _now() -> datetime:
@@ -49,7 +50,10 @@ def _job() -> None:
         logger.exception("scheduled scan failed")
     finally:
         # 扫完再排下一次，节奏随耗时漂移，不易形成固定指纹
-        _arm_next_cycle()
+        try:
+            _arm_next_cycle()
+        except Exception:
+            logger.exception("failed to arm next cycle after scan")
 
 
 def _probe_job() -> None:
@@ -72,15 +76,22 @@ def _probe_job() -> None:
         logger.exception("probe scan failed")
 
 
-def _clear_armed_jobs() -> None:
+def _clear_probe_jobs() -> None:
     if not _scheduler:
         return
     for job in list(_scheduler.get_jobs()):
-        if job.id == FULL_JOB_ID or str(job.id).startswith(PROBE_JOB_ID):
+        if str(job.id).startswith(PROBE_JOB_ID):
             try:
                 job.remove()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def _full_job_pending() -> bool:
+    if not _scheduler or not _scheduler.running:
+        return False
+    job = _scheduler.get_job(FULL_JOB_ID)
+    return bool(job and job.next_run_time)
 
 
 def _arm_next_cycle() -> None:
@@ -90,13 +101,15 @@ def _arm_next_cycle() -> None:
     base, jitter = _schedule_params()
     delay = _random_delay_seconds(base, jitter)
     run_at = _now() + timedelta(seconds=delay)
-    _clear_armed_jobs()
+    # 只清探测任务；全量用 replace_existing，避免在 job 回调里 remove 自身导致丢排程
+    _clear_probe_jobs()
     _scheduler.add_job(
         _job,
         trigger="date",
         run_date=run_at,
         id=FULL_JOB_ID,
         replace_existing=True,
+        misfire_grace_time=max(3600, base * 2),
     )
     logger.info(
         "next full scan in %.0f s (±%s around %s) at %s",
@@ -126,6 +139,7 @@ def _arm_next_cycle() -> None:
                     run_date=probe_at,
                     id=jid,
                     replace_existing=True,
+                    misfire_grace_time=max(600, base),
                 )
                 logger.info(
                     "probe scan armed in %.0f s at %s",
@@ -133,6 +147,24 @@ def _arm_next_cycle() -> None:
                     probe_at.isoformat(),
                 )
                 break
+
+
+def ensure_armed() -> bool:
+    """若没有待执行的全量任务则重新挂载。返回是否执行了挂载。"""
+    if not _scheduler or not _scheduler.running:
+        return False
+    if _full_job_pending():
+        return False
+    logger.warning("full scan job missing; re-arming")
+    _arm_next_cycle()
+    return True
+
+
+def _watchdog() -> None:
+    try:
+        ensure_armed()
+    except Exception:
+        logger.exception("scheduler watchdog failed")
 
 
 def _enabled_routes() -> list:
@@ -147,13 +179,30 @@ def _enabled_routes() -> list:
 def start_scheduler() -> BackgroundScheduler:
     global _scheduler
     if _scheduler and _scheduler.running:
+        ensure_armed()
         return _scheduler
 
     cfg = get_config().schedule
-    _scheduler = BackgroundScheduler(timezone=TZ)
-    _scheduler.start()
     base, jitter = _schedule_params()
+    # misfire_grace_time：休眠/卡顿后仍补跑，避免 date 任务被丢后永不重排
+    _scheduler = BackgroundScheduler(
+        timezone=TZ,
+        job_defaults={
+            "coalesce": True,
+            "misfire_grace_time": max(3600, base * 2),
+        },
+    )
+    _scheduler.start()
     logger.info("scheduler started: every ~%s±%s s (random + probes)", base, jitter)
+
+    _scheduler.add_job(
+        _watchdog,
+        trigger="interval",
+        seconds=60,
+        id=WATCHDOG_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+    )
 
     if cfg.run_on_start:
         run_at = _now() + timedelta(seconds=2)
@@ -163,6 +212,7 @@ def start_scheduler() -> BackgroundScheduler:
             run_date=run_at,
             id=FULL_JOB_ID,
             replace_existing=True,
+            misfire_grace_time=max(3600, base * 2),
         )
         logger.info("run_on_start at %s", run_at.isoformat())
     else:
@@ -192,6 +242,11 @@ def stop_scheduler() -> None:
 def scheduler_status() -> dict[str, Any]:
     cfg = get_config().schedule
     base, jitter = _schedule_params()
+    # 读状态时顺手自愈，避免 next_run_at 长期为空
+    try:
+        ensure_armed()
+    except Exception:
+        logger.exception("ensure_armed during status failed")
     next_run = None
     next_probe = None
     if _scheduler and _scheduler.running:

@@ -268,6 +268,23 @@ function fmtTime(iso) {
   return `${get("month")}/${get("day")} ${hour}:${get("minute")}`;
 }
 
+/** 仅时分秒（北京时间） */
+function fmtClock(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "00";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return `${hour}:${get("minute")}:${get("second")}`;
+}
+
 function toast(msg, opts = {}) {
   const el = document.getElementById("toast");
   const kind = opts.type === "error" ? "error" : opts.type === "warn" ? "warn" : "";
@@ -383,7 +400,6 @@ async function loadHealth() {
     const h = await api("/api/health");
     const names = h.platforms.map((p) => PLATFORM_LABEL[p] || p).join(" · ");
     const health = document.getElementById("health");
-    const next = document.getElementById("nextRun");
     if (h.scanning) {
       health.classList.add("busy");
       const rid = h.scan_route_id != null ? Number(h.scan_route_id) : null;
@@ -408,19 +424,19 @@ async function loadHealth() {
     }
     const last = document.getElementById("lastRun");
     if (last) {
-      last.textContent = h.last_scan?.finished_at
-        ? `上次检测 ${fmtTime(h.last_scan.finished_at)}`
-        : "上次检测 —";
-    }
-    next.textContent = h.next_run_at
-      ? `下次 ${fmtTime(h.next_run_at)}`
-      : "下次扫描 —";
-    const probeEl = document.getElementById("nextProbe");
-    if (probeEl) {
-      probeEl.textContent = h.next_probe_at
-        ? `穿插 ${fmtTime(h.next_probe_at)}`
-        : "";
-      probeEl.hidden = !h.next_probe_at;
+      const parts = [];
+      if (h.last_scan?.finished_at) {
+        parts.push(`上次 ${fmtTime(h.last_scan.finished_at)}`);
+      } else {
+        parts.push("上次 —");
+      }
+      if (h.next_run_at && !h.scanning) {
+        parts.push(`下次 ${fmtTime(h.next_run_at)}`);
+      }
+      last.textContent = parts.join(" · ");
+      last.title = h.next_run_at
+        ? `下次全量扫描 ${h.next_run_at}`
+        : "暂无排程（将自动恢复）";
     }
     syncScanIntervalInput(h.interval_seconds, h.min_interval_seconds);
     state.hasDefaultMail = Boolean(h.notify?.has_default_mail);
@@ -656,6 +672,14 @@ async function patchRouteCard(routeId) {
     deltaEl.className = `delta ${d.cls}`;
     deltaEl.textContent = d.html.replace("较上期 ", "");
   }
+  const checkedEl = card.querySelector(".route-checked");
+  if (checkedEl) {
+    const clock = r.observed_at ? fmtClock(r.observed_at) : "—";
+    checkedEl.textContent = clock;
+    checkedEl.title = r.observed_at
+      ? `上次检测 ${fmtTime(r.observed_at)}`
+      : "尚未检测";
+  }
   const hit = card.querySelector(".badge-hit");
   const shouldHit = r.delta_vs_prev != null && Number(r.delta_vs_prev) < 0;
   if (shouldHit && !hit) {
@@ -770,33 +794,34 @@ async function loadRoutes() {
       const dateLabel = formatRouteDateCapsuleRange(r);
       const dateTitle = formatRouteDateMeta(r);
       const toggleLabel = r.enabled ? "暂停" : "恢复";
+      const checkedClock = r.observed_at ? fmtClock(r.observed_at) : "—";
+      const checkedTitle = r.observed_at
+        ? `上次检测 ${fmtTime(r.observed_at)}`
+        : "尚未检测";
       return `
         <div class="route ${active} ${paused} ${pinned ? "pinned" : ""} ${checked ? "checked" : ""}" data-id="${r.id}" role="button" tabindex="0" title="${r.origin}–${r.destination} · ${dateTitle}">
           <label class="route-check" title="选择以便批量删除">
             <input class="route-check-input" type="checkbox" data-id="${r.id}" ${checked ? "checked" : ""} />
           </label>
           <span class="route-main">
-            <span class="route-body">
-              <span class="route-top">
-                <span class="od">${r.origin_name || r.origin} → ${r.destination_name || r.destination}</span>
-              </span>
-              <span class="route-date" title="${dateTitle}">
-                <span class="date-capsule" title="${dateTitle}">${dateLabel}</span>
-              </span>
-              <span class="route-actions">
-                <button type="button" class="act-pill" data-act="toggle" data-id="${r.id}" title="${toggleLabel}监控">${toggleLabel}</button>
-                <button type="button" class="act-pill" data-act="scan" data-id="${r.id}" title="重新扫描">扫描</button>
-                <button type="button" class="act-pill danger" data-act="delete" data-id="${r.id}" title="删除">删除</button>
-              </span>
-              <span class="route-mid">
-                <span class="route-price-group">
-                  <span class="price">${money(r.best_price)}</span>
-                  <span class="delta ${d.cls}">${d.html.replace("较上期 ", "")}</span>
-                </span>
-              </span>
-            </span>
-            <span class="route-aside">
+            <span class="route-top">
+              <span class="od">${r.origin_name || r.origin} → ${r.destination_name || r.destination}</span>
               <span class="route-badges">${statusMark}${pinMark}${hit}${pausedMark}</span>
+            </span>
+            <span class="route-date">
+              <span class="date-capsule" title="${dateTitle}">${dateLabel}</span>
+              <span class="route-checked" title="${checkedTitle}">${checkedClock}</span>
+            </span>
+            <span class="route-actions">
+              <button type="button" class="act-pill" data-act="toggle" data-id="${r.id}" title="${toggleLabel}监控">${toggleLabel}</button>
+              <button type="button" class="act-pill" data-act="scan" data-id="${r.id}" title="重新扫描">扫描</button>
+              <button type="button" class="act-pill danger" data-act="delete" data-id="${r.id}" title="删除">删除</button>
+            </span>
+            <span class="route-mid">
+              <span class="route-price-group">
+                <span class="price">${money(r.best_price)}</span>
+                <span class="delta ${d.cls}">${d.html.replace("较上期 ", "")}</span>
+              </span>
               <span class="route-foot-right">
                 <span class="route-threshold">${thresholdText}</span>
                 <button type="button" class="route-mail ${notifyCls}" data-act="notify" data-id="${r.id}" title="${notifyTitle}" aria-label="${notifyTitle}">

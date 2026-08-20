@@ -67,6 +67,44 @@ notify:
 
 也可用看板「测试推送」或 `POST /api/notify/test` 验证。
 
+## Docker / 绿联云
+
+推荐推到 Docker Hub 后，在绿联 Docker 里直接拉取运行（无需在 NAS 上编译）。
+
+### 1. 本机构建并推送
+
+```powershell
+docker build -t xmchc/gofly:latest .
+docker login
+docker push xmchc/gofly:latest
+```
+
+Docker Hub 仓库说明见 [`DOCKERHUB.md`](DOCKERHUB.md)（已同步到 [hub.docker.com/r/xmchc/gofly](https://hub.docker.com/r/xmchc/gofly) Overview）。
+
+### 2. 绿联 NAS 部署
+
+1. 在 NAS 建目录（如 `docker/gofly`），放入 `docker-compose.yml`，并复制 `config.example.yaml` → `config.yaml` 后按需改推送/航线
+2. 确认 `config.yaml` 中 `server.host` 为 `0.0.0.0`
+3. Docker 应用 / Compose 选择该目录启动；或 SSH：`docker compose up -d`
+4. 访问：`http://NAS的IP:8787`
+
+挂载说明：
+
+| 宿主机 | 容器 | 用途 |
+|--------|------|------|
+| `./config.yaml` | `/app/config.yaml` | 配置（勿打进镜像） |
+| `./data` | `/app/data` | SQLite 价格库 |
+| `./logs` | `/app/logs` | 日志（可选） |
+
+环境变量只需可选的 `GOFLY_CONFIG`（默认 `/app/config.yaml`）和 `TZ`。其余都在 `config.yaml`。
+
+更新镜像：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
 ## 城市码参考
 
 `BJS` 北京、`SHA` 上海、`SZX` 深圳、`CAN` 广州、`CTU` 成都、`KMG` 昆明 等。

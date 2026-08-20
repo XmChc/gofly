@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app import db
 from app.cities import CITY_NAMES, CityResolveError, resolve_route_inputs, suggest_cities
-from app.config import MIN_INTERVAL_SECONDS, get_config
+from app.config import MIN_INTERVAL_SECONDS, config_file_path, get_config
 from app.scheduler import reschedule, scheduler_status, start_scheduler, stop_scheduler
 from app.services.demo_history import backfill_demo_history
 from app.services.monitor import get_scan_state, run_all_enabled, run_one_exclusive
@@ -389,6 +389,7 @@ def main() -> None:
     import uvicorn
 
     cfg = get_config().server
+    logger.info("listening on http://%s:%s (config=%s)", cfg.host, cfg.port, config_file_path())
     uvicorn.run(
         "app.main:app",
         host=cfg.host,

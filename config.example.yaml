@@ -23,7 +23,8 @@ crawler:
   rate_limit: true
 
 server:
-  host: 127.0.0.1
+  # Docker / NAS 请用 0.0.0.0；仅本机访问可改回 127.0.0.1
+  host: 0.0.0.0
   port: 8787
 
 database:

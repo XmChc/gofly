@@ -546,20 +546,16 @@ main,
   cursor: pointer;
 }
 .route-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.55rem;
-  align-items: stretch;
-  min-width: 0;
-}
-.route-body {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.4rem;
   min-width: 0;
+  flex: 1;
 }
 .route-top,
 .route-date,
-.route-actions {
+.route-actions,
+.route-mid {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -568,13 +564,12 @@ main,
 }
 .route-top {
   align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 .route-mid {
-  display: flex;
   align-items: baseline;
-  gap: 0.4rem;
-  width: 100%;
-  min-width: 0;
+  justify-content: space-between;
   padding-top: 0.15rem;
   border-top: 1px dashed #eef2f6;
 }
@@ -585,44 +580,18 @@ main,
   gap: 0.15rem 0.4rem;
   min-width: 0;
 }
-.route-aside {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 0.35rem;
-  flex-shrink: 0;
-  align-self: stretch;
-}
-.route .od {
-  font-weight: 700;
-  font-size: 0.9rem;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-  min-width: 0;
-}
-.route .meta {
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 500;
-  white-space: nowrap;
-}
 .route-date {
-  justify-content: flex-start;
-}
-.route-actions {
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-  gap: 0.28rem;
-}
-.route-actions .act-pill {
-  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
 }
 .route-date .date-capsule {
   display: inline-flex;
   align-items: center;
-  max-width: 100%;
-  padding: 0.14rem 0.48rem;
+  flex: 0 0 auto;
+  width: fit-content;
+  max-width: none;
+  padding: 0.14rem 0.52rem;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: #f8fafc;
@@ -632,8 +601,7 @@ main,
   font-weight: 650;
   white-space: nowrap;
   line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
   cursor: default;
   pointer-events: none;
 }
@@ -641,6 +609,46 @@ main,
   border-color: #bfdbfe;
   background: #eff6ff;
   color: var(--accent-strong);
+}
+.route-checked {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.route-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+.route .od {
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.route .meta {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.route-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 0.28rem;
+}
+.route-actions .act-pill {
+  flex: 0 0 auto;
 }
 .act-pill,
 .batch-pill {
@@ -721,15 +729,6 @@ main,
 .delta.down { color: var(--down); }
 .route .delta.up,
 .delta.up { color: var(--up); }
-.route-badges {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-start;
-  gap: 0.28rem;
-  flex-shrink: 0;
-  padding-top: 0.05rem;
-}
 .route-badges:empty {
   display: none;
 }

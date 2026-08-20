@@ -61,7 +61,7 @@ class CrawlerConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 8787
 
 
@@ -117,13 +117,32 @@ def load_raw(path: Path | None = None) -> dict[str, Any]:
     cfg_path = path or _resolve_path(os.environ.get("GOFLY_CONFIG", DEFAULT_CONFIG))
     if not cfg_path.exists():
         cfg_path = EXAMPLE_CONFIG
+    if cfg_path.is_dir():
+        raise FileNotFoundError(
+            f"配置路径是目录而非文件: {cfg_path}（请挂载文件到 /app/config.yaml，不要挂成空目录）"
+        )
     with open(cfg_path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
+def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
+    """环境变量覆盖 YAML（便于 Docker/绿联改监听地址）。"""
+    out = dict(raw)
+    server = dict(out.get("server") or {})
+    host = os.environ.get("GOFLY_HOST") or os.environ.get("SERVER_HOST")
+    port = os.environ.get("GOFLY_PORT") or os.environ.get("SERVER_PORT")
+    if host:
+        server["host"] = host.strip()
+    if port:
+        server["port"] = int(port)
+    if server:
+        out["server"] = server
+    return out
+
+
 @lru_cache
 def get_config() -> AppConfig:
-    return AppConfig.model_validate(load_raw())
+    return AppConfig.model_validate(_apply_env_overrides(load_raw()))
 
 
 def reload_config() -> AppConfig:

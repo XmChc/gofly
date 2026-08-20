@@ -1529,6 +1529,27 @@ def best_filtered_quote(
     return best
 
 
+def latest_route_observed_at(
+    route_id: int, *, platforms: list[str] | None = None
+) -> Optional[str]:
+    """该航线最近一次写入快照的时间（含失败快照），作「上次检测」。"""
+    route = get_route(route_id)
+    allow_dates = set(route_depart_dates(route) if route else [])
+    with connect() as conn:
+        sql = "SELECT MAX(observed_at) AS t FROM price_snapshots WHERE route_id = ?"
+        params: list[Any] = [route_id]
+        if platforms:
+            ph = ",".join("?" for _ in platforms)
+            sql += f" AND lower(platform) IN ({ph})"
+            params.extend(p.lower() for p in platforms)
+        if allow_dates:
+            ph = ",".join("?" for _ in allow_dates)
+            sql += f" AND IFNULL(depart_date, '') IN ({ph})"
+            params.extend(sorted(allow_dates))
+        row = conn.execute(sql, params).fetchone()
+    return str(row["t"]) if row and row["t"] else None
+
+
 def route_dashboard(platforms: list[str] | None = None) -> list[dict[str, Any]]:
     routes = list_routes()
     out = []
@@ -1541,6 +1562,7 @@ def route_dashboard(platforms: list[str] | None = None) -> list[dict[str, Any]]:
             and best_price is not None
             and float(best_price) <= float(r["alert_threshold"])
         )
+        observed_at = latest_route_observed_at(r["id"], platforms=platforms)
         out.append(
             {
                 **r,
@@ -1548,7 +1570,7 @@ def route_dashboard(platforms: list[str] | None = None) -> list[dict[str, Any]]:
                 "best_price": best_price,
                 "best_platform": quote["platform"] if quote else None,
                 "delta_vs_prev": quote["delta_vs_prev"] if quote else None,
-                "observed_at": quote["observed_at"] if quote else None,
+                "observed_at": observed_at,
                 "sparkline": sparkline(r["id"]),
                 "below_threshold": bool(below),
             }

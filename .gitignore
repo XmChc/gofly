@@ -24,3 +24,5 @@ secrets/
 *.pem
 *.key
 credentials.json
+gofly-image.tar
+*.tar

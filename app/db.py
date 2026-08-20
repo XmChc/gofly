@@ -93,6 +93,10 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_platform
     ON price_snapshots(route_id, platform, observed_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_route
     ON price_alerts(route_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_offers_snapshot
+    ON flight_offers(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_offers_snapshot_flight
+    ON flight_offers(snapshot_id, flight_no);
 """
 
 
@@ -1500,13 +1504,14 @@ def best_filtered_quote(
     filters: Any,
     *,
     platforms: list[str] | None = None,
+    compare: list[dict[str, Any]] | None = None,
 ) -> Optional[dict[str, Any]]:
     """各平台最近快照中，命中航线默认筛选的最低报价。"""
     from app.services.filters import filter_offers
 
-    compare = latest_compare(route_id, platforms=platforms)
+    snaps = compare if compare is not None else latest_compare(route_id, platforms=platforms)
     best: Optional[dict[str, Any]] = None
-    for snap in compare:
+    for snap in snaps:
         matched = filter_offers(offers_for_snapshot(int(snap["id"])), filters)
         if not matched:
             continue
@@ -1551,11 +1556,14 @@ def latest_route_observed_at(
 
 
 def route_dashboard(platforms: list[str] | None = None) -> list[dict[str, Any]]:
+    """监控列表用摘要：不返回全量 platforms / sparkline，避免 N+1 拖慢切航线。"""
     routes = list_routes()
     out = []
     for r in routes:
         compare = latest_compare(r["id"], platforms=platforms)
-        quote = best_filtered_quote(r["id"], r.get("filters"), platforms=platforms)
+        quote = best_filtered_quote(
+            r["id"], r.get("filters"), platforms=platforms, compare=compare
+        )
         best_price = quote["price"] if quote else None
         below = (
             r["alert_threshold"]
@@ -1566,12 +1574,10 @@ def route_dashboard(platforms: list[str] | None = None) -> list[dict[str, Any]]:
         out.append(
             {
                 **r,
-                "platforms": compare,
                 "best_price": best_price,
                 "best_platform": quote["platform"] if quote else None,
                 "delta_vs_prev": quote["delta_vs_prev"] if quote else None,
                 "observed_at": observed_at,
-                "sparkline": sparkline(r["id"]),
                 "below_threshold": bool(below),
             }
         )

@@ -20,6 +20,7 @@ const state = {
   },
   offerSort: "price",
   filtersExpanded: false,
+  detailSeq: 0,
   lastFlightSeries: {},
   comparePlatforms: [],
   routes: [],
@@ -839,43 +840,66 @@ async function loadRoutes() {
     })
     .join("");
 
-  const isQuickTarget = (t) => t.closest(".route-check, .act-pill, .route-mail");
-
-  box.querySelectorAll(".route").forEach((el) => {
-    const open = () => openDetail(Number(el.dataset.id));
-    el.addEventListener("click", (e) => {
-      if (isQuickTarget(e.target)) return;
-      open();
-    });
-    el.addEventListener("keydown", (e) => {
-      if (isQuickTarget(e.target)) return;
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        open();
-      }
-    });
-  });
-
-  box.querySelectorAll(".route-check-input").forEach((cb) => {
-    cb.addEventListener("click", (e) => e.stopPropagation());
-    cb.addEventListener("change", (e) => {
-      e.stopPropagation();
-      setRouteChecked(cb.dataset.id, cb.checked);
-    });
-  });
-
-  box.querySelectorAll(".act-pill, .route-mail").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      handleRouteQuickAct(btn.dataset.act, btn.dataset.id, btn);
-    });
-  });
-
+  bindRouteListUi(box);
   syncRouteBatchBar();
   syncPinButton();
   paintSelectedRoutePrice();
   return routes;
+}
+
+function markRouteActive(id) {
+  const box = document.getElementById("routeList");
+  if (!box) return;
+  const sid = Number(id);
+  box.querySelectorAll(".route").forEach((el) => {
+    el.classList.toggle("active", Number(el.dataset.id) === sid);
+  });
+}
+
+function bindRouteListUi(root) {
+  const box = root || document.getElementById("routeList");
+  if (!box || box.dataset.uiBound === "1") return;
+  box.dataset.uiBound = "1";
+  const isQuickTarget = (t) =>
+    t && t.closest && t.closest(".route-check, .act-pill, .route-mail");
+
+  box.addEventListener("click", (e) => {
+    const quick = e.target.closest?.(".act-pill, .route-mail");
+    if (quick && box.contains(quick)) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleRouteQuickAct(quick.dataset.act, quick.dataset.id, quick);
+      return;
+    }
+    if (isQuickTarget(e.target)) return;
+    const row = e.target.closest?.(".route");
+    if (!row || !box.contains(row)) return;
+    openDetail(Number(row.dataset.id));
+  });
+
+  box.addEventListener("keydown", (e) => {
+    if (isQuickTarget(e.target)) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target.closest?.(".route");
+    if (!row || !box.contains(row)) return;
+    e.preventDefault();
+    openDetail(Number(row.dataset.id));
+  });
+
+  box.addEventListener("change", (e) => {
+    const cb = e.target.closest?.(".route-check-input");
+    if (!cb || !box.contains(cb)) return;
+    e.stopPropagation();
+    setRouteChecked(cb.dataset.id, cb.checked);
+  });
+
+  box.addEventListener(
+    "click",
+    (e) => {
+      if (e.target.closest?.(".route-check-input")) e.stopPropagation();
+    },
+    true
+  );
 }
 
 async function openDetail(id, opts = {}) {
@@ -888,8 +912,17 @@ async function openDetail(id, opts = {}) {
   } = opts;
   const focusFn = String(focusFlight || "").trim();
   const focusDay = String(focusDate || "").trim();
+  const seq = ++state.detailSeq;
+
+  state.selectedId = id;
+  markRouteActive(id);
+
+  const detail = document.getElementById("detail");
+  detail.hidden = false;
 
   const data = await api(`/api/routes/${id}/compare`);
+  if (seq !== state.detailSeq) return false;
+
   const r = data.route;
   const priced = (data.platforms || [])
     .filter((p) => p.min_price != null)
@@ -939,15 +972,12 @@ async function openDetail(id, opts = {}) {
 
   const focusHit = focusFn ? matchFocusOffer(merged) : null;
 
-  state.selectedId = id;
   if (!soft) {
     state.hiddenFlights = new Set();
     state.pinnedFlights = new Set();
     state.lastFlightSeries = {};
     state.filtersExpanded = false;
   }
-  const detail = document.getElementById("detail");
-  detail.hidden = false;
   syncPinButton();
 
   state.currentRoute = r;
@@ -980,7 +1010,6 @@ async function openDetail(id, opts = {}) {
     : "恢复监控";
   syncPinButton();
 
-  if (!soft) await loadRoutes();
   state.comparePlatforms = data.platforms || [];
 
   const offerBox = document.getElementById("offerTable");
@@ -1009,6 +1038,7 @@ async function openDetail(id, opts = {}) {
   state.offerRoute = r;
   if (!soft) state.offerTab = "all";
 
+  // 趋势与列表刷新不挡首屏：先画报价板
   if (!allOffers.length) {
     hideOfferFilters();
     hideRecommendBoard();
@@ -1020,16 +1050,22 @@ async function openDetail(id, opts = {}) {
     paintSelectedRoutePrice();
   }
 
-  await renderTrend(id);
+  const trendTask = renderTrend(id).catch(() => {});
+  if (!soft) loadRoutes().catch(() => {});
+
   if (scroll) {
     document.getElementById("monitorPanel").scrollIntoView({ behavior: "smooth", block: "start" });
   }
   if (focusFn) {
-    window.setTimeout(() => scrollToFlight(focusFn, focusDay), scroll ? 280 : 60);
+    window.setTimeout(() => {
+      if (seq === state.detailSeq) scrollToFlight(focusFn, focusDay);
+    }, scroll ? 280 : 60);
   }
   if (filtersRelaxed) {
     toast("已临时放宽筛选以显示该航班");
   }
+  // 不阻塞等待趋势图；后台渲染即可
+  void trendTask;
   return true;
 }
 
@@ -2441,16 +2477,23 @@ function openFlightTrendModal(flightNo) {
 function bindFlightTrendOpen(root) {
   const box = root || document.getElementById("offerTable");
   if (!box) return;
-  box.querySelectorAll(".flight-trend.is-clickable").forEach((el) => {
-    const open = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openFlightTrendModal(el.dataset.flight);
-    };
-    el.addEventListener("click", open);
-    el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") open(e);
-    });
+  if (box.dataset.trendBound === "1") return;
+  box.dataset.trendBound = "1";
+  const open = (el, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openFlightTrendModal(el.dataset.flight);
+  };
+  box.addEventListener("click", (e) => {
+    const el = e.target.closest?.(".flight-trend.is-clickable");
+    if (!el || !box.contains(el)) return;
+    open(el, e);
+  });
+  box.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target.closest?.(".flight-trend.is-clickable");
+    if (!el || !box.contains(el)) return;
+    open(el, e);
   });
 }
 
@@ -2833,16 +2876,18 @@ function paintTrendFromCache() {
       },
       series,
     },
-    true
+    { notMerge: true, lazyUpdate: true }
   );
-  state.chart.resize();
+  requestAnimationFrame(() => state.chart?.resize());
 }
 
 async function renderTrend(id) {
+  const seq = state.detailSeq;
   const days = state.trendDays;
   const qs = new URLSearchParams({ limit: "300" });
   if (days) qs.set("days", String(days));
   const trend = await api(`/api/routes/${id}/trend?${qs}`);
+  if (seq !== state.detailSeq || Number(state.selectedId) !== Number(id)) return;
   state.lastFlightSeries = trend.flight_series || {};
   paintTrendFromCache();
 }
@@ -3486,7 +3531,7 @@ function isEditingDashboardUi() {
 function scheduleLivePoll(scanning = false) {
   if (livePoll.timer) clearTimeout(livePoll.timer);
   const hidden = typeof document !== "undefined" && document.hidden;
-  const ms = hidden ? 60000 : scanning ? 3000 : 10000;
+  const ms = hidden ? 60000 : scanning ? 4000 : 15000;
   livePoll.timer = setTimeout(() => {
     pollDashboard().catch(() => {});
   }, ms);
@@ -3561,7 +3606,7 @@ async function pollDashboard() {
     loadAlerts(),
   ]);
   if (routes && routes.length) {
-    await openDetail(routes[0].id, { scroll: false });
+    await openDetail(routes[0].id, { scroll: false, soft: true });
   }
   livePoll.routeStamp = routeDataStamp(state.routes);
   livePoll.selectedStamp = selectedRouteStamp(state.routes, state.selectedId);

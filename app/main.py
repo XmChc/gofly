@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import db
+from app import __version__ as APP_VERSION
 from app.cities import CITY_NAMES, CityResolveError, resolve_route_inputs, suggest_cities
 from app.config import MIN_INTERVAL_SECONDS, config_file_path, get_config
 from app.scheduler import reschedule, scheduler_status, start_scheduler, stop_scheduler
@@ -95,6 +96,7 @@ def health() -> dict[str, Any]:
     jitter_s = int(sched.get("jitter_seconds") or cfg.schedule.jitter_seconds)
     return {
         "ok": True,
+        "version": APP_VERSION,
         "platforms": cfg.platforms,
         "interval_seconds": interval_s,
         "min_interval_seconds": MIN_INTERVAL_SECONDS,

@@ -422,6 +422,7 @@ async function loadHealth() {
       } else {
         health.textContent = `${names || "无平台"} · 每 ${interval || "—"} s`;
       }
+      if (h.version) health.title = `GoFly ${h.version}`;
     }
     const last = document.getElementById("lastRun");
     if (last) {

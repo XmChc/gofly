@@ -4,8 +4,12 @@
 # 3. docker compose up -d
 #
 # 本机构建并推送：
-#   docker build -t xmchc/gofly:latest .
-#   docker push xmchc/gofly:latest
+#   .\scripts\push-docker.ps1
+#
+# 绿联「快捷访问」：系统靠 ports 字段发现服务端口。
+# - Bridge（默认）：ports 既做真实映射，也用于生成快捷入口 → 推荐
+# - Host：ports 映射无效，但仍须写 "8787:8787"（两端端口一致）供识别快捷入口
+#   勿写成 "8888:8787"，绿联会识别失败
 
 services:
   gofly:
@@ -14,8 +18,9 @@ services:
     # build: .
     container_name: gofly
     restart: unless-stopped
+    # 默认 bridge；不要加 network_mode: host（除非你明确需要）
     ports:
-      - "8787:8787"
+      - "8787:8787"   # 宿主机:容器；绿联据此生成「快捷访问」
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./data:/app/data

@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # 绿联对比 digest：每次发布改此版本号再 push，即可出现「可更新」
-ARG APP_VERSION=2026.08.20.4
+ARG APP_VERSION=2026.08.20.7
 LABEL org.opencontainers.image.title="GoFly" \
       org.opencontainers.image.description="国内机票价格监控" \
       org.opencontainers.image.version="${APP_VERSION}"

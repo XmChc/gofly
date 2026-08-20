@@ -19,6 +19,7 @@ const state = {
     directOnly: null,
   },
   offerSort: "price",
+  filtersExpanded: false,
   lastFlightSeries: {},
   comparePlatforms: [],
   routes: [],
@@ -942,6 +943,7 @@ async function openDetail(id, opts = {}) {
     state.hiddenFlights = new Set();
     state.pinnedFlights = new Set();
     state.lastFlightSeries = {};
+    state.filtersExpanded = false;
   }
   const detail = document.getElementById("detail");
   detail.hidden = false;
@@ -1455,18 +1457,61 @@ function paintOfferFilters(total, filteredN) {
     total,
     filteredN
   );
+  el.classList.toggle("is-expanded", !!state.filtersExpanded);
+  el.classList.toggle("is-dirty", filtersDirty());
   el.hidden = false;
   bindOfferFiltersUi(el);
+}
+
+function offerFilterSummary(f, sortCur, durOpts, dayOpts, bagOpts, directOpts, sortOpts) {
+  const tags = [];
+  const pick = (opts, v) => opts.find((o) => o.v === v)?.label;
+  if (f.maxDuration != null) {
+    const label = pick(durOpts, String(f.maxDuration));
+    if (label) tags.push(label);
+  }
+  if (f.sameDay === true) tags.push(pick(dayOpts, "1") || "当天到达");
+  else if (f.sameDay === false) tags.push(pick(dayOpts, "0") || "跨天到达");
+  if (f.directOnly === true) tags.push(pick(directOpts, "1") || "仅直飞");
+  else if (f.directOnly === false) tags.push(pick(directOpts, "0") || "仅中转");
+  if (f.bag20) tags.push(pick(bagOpts, "1") || "含20kg托运");
+  if (sortCur && sortCur !== "price") {
+    const label = pick(sortOpts, sortCur);
+    if (label) tags.push(`按${label}`);
+  }
+  return tags;
 }
 
 function renderOfferFilters(durOpts, dayOpts, bagOpts, directOpts, sortOpts, f, total, filteredN) {
   const bagCur = f.bag20 ? "1" : "";
   const sortCur = state.offerSort || "price";
   const dirty = filtersDirty();
+  const expanded = !!state.filtersExpanded;
   let directCur = "";
   if (f.directOnly === true) directCur = "1";
   else if (f.directOnly === false) directCur = "0";
+  const summary = offerFilterSummary(f, sortCur, durOpts, dayOpts, bagOpts, directOpts, sortOpts);
+  const summaryHtml = summary.length
+    ? summary.map((t) => `<span class="fb-filter-tag">${t}</span>`).join("")
+    : `<span class="fb-filter-tag muted">未设筛选</span>`;
   return `
+      <div class="fb-filters-bar">
+        <button type="button" class="fb-filters-toggle" data-filter-act="toggle" aria-expanded="${expanded ? "true" : "false"}">
+          <span class="fb-filters-toggle-main">
+            <span class="fb-filters-toggle-title">筛选</span>
+            <span class="fb-filters-count">显示 ${filteredN}/${total}</span>
+          </span>
+          <span class="fb-filters-summary">${summaryHtml}</span>
+          <span class="fb-filters-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="fb-filter-meta">
+          <span class="fb-filter-count-desk">显示 ${filteredN} / ${total}</span>
+          <span class="fb-filter-hint">${dirty ? "未保存 · 仅预览" : "推送按已保存筛选"}</span>
+          ${dirty ? `<button type="button" class="btn ghost fb-filter-reset" data-filter-act="reset">还原</button>` : ""}
+          <button type="button" class="btn primary fb-filter-save" data-filter-act="save" ${dirty ? "" : "disabled"}>保存默认</button>
+        </div>
+      </div>
+      <div class="fb-filters-body">
       <div class="fb-filter-group">
         <span class="fb-filter-label">总时长</span>
         <div class="fb-filter-seg" data-filter="maxDuration">
@@ -1526,11 +1571,6 @@ function renderOfferFilters(durOpts, dayOpts, bagOpts, directOpts, sortOpts, f, 
             .join("")}
         </div>
       </div>
-      <div class="fb-filter-meta">
-        <span>显示 ${filteredN} / ${total}</span>
-        <span class="fb-filter-hint">${dirty ? "未保存 · 仅预览" : "推送按已保存筛选"}</span>
-        ${dirty ? `<button type="button" class="btn ghost fb-filter-reset" data-filter-act="reset">还原</button>` : ""}
-        <button type="button" class="btn primary fb-filter-save" data-filter-act="save" ${dirty ? "" : "disabled"}>保存默认</button>
       </div>`;
 }
 
@@ -1719,6 +1759,13 @@ function onOfferFilterClick(e) {
   const actBtn = e.target.closest("[data-filter-act]");
   if (actBtn && box.contains(actBtn)) {
     const act = actBtn.getAttribute("data-filter-act");
+    if (act === "toggle") {
+      state.filtersExpanded = !state.filtersExpanded;
+      box.classList.toggle("is-expanded", state.filtersExpanded);
+      const toggle = box.querySelector(".fb-filters-toggle");
+      if (toggle) toggle.setAttribute("aria-expanded", state.filtersExpanded ? "true" : "false");
+      return;
+    }
     if (act === "save") saveRouteFilters();
     else if (act === "reset") resetOfferFiltersToSaved();
     return;

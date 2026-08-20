@@ -850,6 +850,15 @@ main,
   backdrop-filter: none;
 }
 .fb-filters[hidden] { display: none !important; }
+.fb-filters-bar {
+  display: contents;
+}
+.fb-filters-toggle {
+  display: none;
+}
+.fb-filters-body {
+  display: contents;
+}
 .fb-filter-group {
   display: inline-flex;
   align-items: center;
@@ -914,6 +923,22 @@ main,
   cursor: default;
   transform: none;
   box-shadow: none;
+}
+.fb-filter-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.fb-filter-tag.muted {
+  background: #f1f5f9;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 /* —— Detail sheet —— */
@@ -2050,9 +2075,157 @@ body.modal-open { overflow: hidden; }
     flex-direction: column;
     align-items: flex-start;
   }
-  .page { padding: 0.2rem 1rem 2.5rem; }
-  .sheet-actions { width: 100%; }
-  .sheet-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .page { padding: 0.2rem 0.85rem 2.5rem; }
+  .main-col,
+  .detail-sheet {
+    padding: 0.75rem 0.85rem 1rem;
+  }
+  .detail-sticky-top {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin: -0.75rem -0.85rem 0.55rem;
+    padding: 0.55rem 0.85rem 0.55rem;
+  }
+  .detail-sticky-top .sheet-head {
+    order: -1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.45rem;
+    padding: 0;
+  }
+  .detail-sticky-top .sheet-head h2 {
+    font-size: 1.05rem;
+  }
+  .sheet-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+    width: 100%;
+  }
+  .sheet-actions .alert-limit-field {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: space-between;
+    margin: 0;
+    padding: 0.3rem 0.45rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+  .sheet-actions .alert-limit-input {
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+  .sheet-actions .btn {
+    flex: none;
+    width: 100%;
+    justify-content: center;
+    padding: 0.42rem 0.5rem;
+    font-size: 0.78rem;
+    border-radius: 10px;
+  }
+  .sheet-actions #btnScanOne {
+    grid-column: 1 / -1;
+  }
+  .sheet-actions #btnClose {
+    grid-column: 1 / -1;
+    padding: 0.32rem 0.5rem;
+    font-size: 0.74rem;
+    color: var(--muted);
+  }
+
+  .fb-filters {
+    display: grid;
+    gap: 0.4rem;
+    width: 100%;
+  }
+  .fb-filters-bar {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .fb-filters-toggle {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.2rem 0.5rem;
+    align-items: center;
+    width: 100%;
+    margin: 0;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #f8fafc;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .fb-filters-toggle-main {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+  .fb-filters-toggle-title {
+    font-size: 0.82rem;
+    font-weight: 750;
+  }
+  .fb-filters-count {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 650;
+  }
+  .fb-filters-summary {
+    grid-column: 1 / 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.22rem;
+    min-width: 0;
+  }
+  .fb-filters-chevron {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.15s ease;
+    align-self: center;
+  }
+  .fb-filters.is-expanded .fb-filters-chevron {
+    transform: rotate(-135deg);
+    margin-top: 0.2rem;
+  }
+  .fb-filters-body {
+    display: none;
+    gap: 0.4rem;
+  }
+  .fb-filters.is-expanded .fb-filters-body {
+    display: grid;
+  }
+  .fb-filter-group {
+    display: grid;
+    gap: 0.28rem;
+  }
+  .fb-filter-seg {
+    width: 100%;
+  }
+  .fb-filter-meta {
+    width: 100%;
+    margin: 0;
+    justify-content: space-between;
+  }
+  .fb-filters:not(.is-expanded) .fb-filter-hint {
+    display: none;
+  }
+  .fb-filters:not(.is-expanded):not(.is-dirty) .fb-filter-meta {
+    display: none;
+  }
+  .fb-filter-count-desk {
+    display: none;
+  }
   .add-form { grid-template-columns: 1fr; }
   .field.narrow { max-width: none; }
 }
